@@ -3,12 +3,14 @@ This repository contains files for the AIOps interpretation project.
 
 ## Introduction
 We organize the repository as follows:
-1. Data files: due to the enormous size, I have zipped and uploaded the two CSV files in the release page of this repository.
-2. Experiment code: the experiment codes are put right in this repository. 
+1. Data files: due to the enormous size, I have zipped and uploaded the two CSV files on the release page;
+2. Experiment code: the experiment code is put right in this repository;
+3. Result analysis: the experiment results (output CSV files) and R code for result analysis is also in this repository in the folder `analysis`.
 
 ## Guide to execute experiment code
 1. Get the environment ready: Our experiment is carried out using the following packages and versions:
 - Python: 3.8.3
+- R: 3.6.3
 - Numpy: 1.18.5
 - Scipy: 1.5.0
 - Pandas: 1.0.5
@@ -20,7 +22,7 @@ We organize the repository as follows:
 We recommend use an [Anaconda](https://docs.anaconda.com/anaconda/install/) enviorment with Python version 3.8.3, install the `xgboost` and `rgf-python` packages through `pip`,then everything would be ready.
 If you insist to install a Python distribution from elsewhere and failed to import the `mkl` package, you could delete the two related lines in the `utilities.py` file. However, doing so would make the NN model to use unlimited CPU cores.
 
-2. Have the data file ready: Please download and place the data files (`google_job_failure.csv` and `disk_failure_v2.csv`) and place them in the same folder with source code files. You could also have the data files in other folders with other names, but make sure to change the related variables in the `utilities.py` file.
+2. Have the data file ready: Please download and place the data files (`google_job_failure.csv` and `disk_failure_v2.csv`) in the same folder with source code files. You could also have the data files in other folders with other names, but make sure to change the related variables in the `utilities.py` file.
 
 3. Take care of configuration variables: The code contains a few variables to control the input and output folder and file names. The variables related to the data file are located at the head of the `utilities.py` file, and variables related to the experiment output file and trained model save folder are located at the head of each experiment code file. Note that the experiment code removes the old output file before execution, so ensure you have saved the previous version. If you choose to save pickled models, please make sure the folder exists.
 
@@ -30,7 +32,7 @@ If you insist to install a Python distribution from elsewhere and failed to impo
 
 
 ### Command line arguments
-In our experiment code, we have the following command-line argument:
+In our experiment code, we have the following command-line arguments:
 1. `-d` is a **required** parameter for choosing the dataset. Two choices are available: `g` for the Google dataset, `b` for the Backblaze dataset.
 2. `-m` is a **required** parameter for choosing the model. Eight choices are available: `lda`, `qda`, `lr`, `cart`, `gbdt`, `nn`, `rf`, and `rgf`. Please note that the argument should be all *lowercase* letters.
 3. `-n` is an optional parameter for the repetition time of the experiments. The default value is 100 runs, which is also the same iteration we used in our paper.
