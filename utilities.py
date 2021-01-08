@@ -17,14 +17,14 @@ import numpy as np
 import traceback
 import mkl
 import os
+import logging
 
 import warnings
 
-mkl.set_num_threads(1)  # control the number of thread used for NN model
+#mkl.set_num_threads(1)  # control the number of thread used for NN model
 N_WORKERS = 1  # control the number of workers used for the RF and GBDT model
 
-#INPUT_FOLDER = r'/home/local/SAIL/yingzhe/ops_data/Google_cluster_data/clusterdata-2011-2/google_job/'
-INPUT_FOLDER = r'./'
+INPUT_FOLDER = r'./data/'
 GOOGLE_INPUT_FILE = r'google_job_failure.csv'
 BACKBLAZE_INPUT_FILE = r'disk_failure_v2.csv'
 
@@ -49,7 +49,7 @@ def obtain_tuned_model(model_name, features, labels):
         warnings.simplefilter("ignore")
         random_search.fit(features, labels)
 
-    print("Best parameters (AUC {0}): {1}".format(random_search.best_score_, random_search.best_params_))
+    logging.info("......Best parameters (AUC {0}): {1}".format(random_search.best_score_, random_search.best_params_))
 
     return random_search.best_estimator_
 
@@ -147,7 +147,7 @@ def obtain_untuned_model(model_name):
     elif model_name == 'cart':
         model = DecisionTreeClassifier()
     elif model_name == 'gbdt':
-        model = XGBClassifier(n_jobs=N_WORKERS)
+        model = XGBClassifier(n_jobs=N_WORKERS, use_label_encoder=False)
     elif model_name == 'nn':
         model = MLPClassifier()
     elif model_name == 'rf':
@@ -188,28 +188,29 @@ def get_google_data():
         labels (np.array): binary label array, shape of (n_samples,)
     '''
     path = os.path.join(INPUT_FOLDER, GOOGLE_INPUT_FILE)
-    print('Loading data from', path)
+    logging.info('...Loading data from %s', path)
     df = pd.read_csv(path)
 
     #columns = ['Start Time', 'User ID', 'Job Name', 'Scheduling Class',
     #           'Num Tasks', 'Priority', 'Diff Machine', 'CPU Requested', 'Mem Requested', 'Disk Requested',
     #           'Avg CPU', 'Avg Mem', 'Avg Disk', 'Std CPU', 'Std Mem', 'Std Disk']
 
-    columns = ['Start Time', 'User ID', 'Job Name', 'Scheduling Class',
+    columns = ['Start Time', 'Scheduling Class',
                'Num Tasks', 'Priority', 'Diff Machine', 'CPU Requested', 'Disk Requested',
                'Avg CPU', 'Avg Mem', 'Avg Disk', 'Std Mem']
-    print('Load complete')
 
     features = df[columns].to_numpy()
     labels = (df['Status']==3).to_numpy()
 
-    print('Preprocessing features')
-    le = preprocessing.LabelEncoder()
-    features[:, 1] = le.fit_transform(features[:, 1])
+    #print('Preprocessing features')
+    #le = preprocessing.LabelEncoder()
+    #features[:, 1] = le.fit_transform(features[:, 1])
 
-    le = preprocessing.LabelEncoder()
-    features[:, 2] = le.fit_transform(features[:, 2])
-    print('Preprocessing complete\n')
+    #le = preprocessing.LabelEncoder()
+    #features[:, 2] = le.fit_transform(features[:, 2])
+    #print('Preprocessing complete\n')
+
+    logging.info('...Load complete')
 
     return features, labels
 
@@ -231,11 +232,11 @@ def get_disk_data(interval='d'):
         labels (np.array): binary label array, shape of (n_samples,)
     '''
     path = os.path.join(INPUT_FOLDER, BACKBLAZE_INPUT_FILE)
-    print('Loading data from', path)
+    logging.info('...Loading data from %s', path)
     df = pd.read_csv(path)
-    print('Load complete')
+    logging.info('...Load complete')
     
-    print('Preprocessing features')
+    logging.info('...Preprocessing features')
     #df = df[['date',
     #    'smart_1_raw', 'smart_4_raw', 'smart_5_raw', 'smart_7_raw', 'smart_9_raw', 'smart_12_raw', 'smart_187_raw', 'smart_193_raw', 'smart_194_raw', 'smart_197_raw', 'smart_199_raw',
     #    'smart_4_raw_diff', 'smart_5_raw_diff', 'smart_9_raw_diff', 'smart_12_raw_diff', 'smart_187_raw_diff', 'smart_193_raw_diff', 'smart_197_raw_diff', 'smart_199_raw_diff',
@@ -252,7 +253,7 @@ def get_disk_data(interval='d'):
     elif interval == 'm':
         df['date'] = pd.Series((pd.DatetimeIndex(df['date']).year - 2015) * 12 + pd.DatetimeIndex(df['date']).month)
     else: 
-        print('Invalid time interval argument for reading disk failure data. Possible options are (d, m).')
+        logging.error('Invalid time interval argument for reading disk failure data. Possible options are (d, m).')
         exit(-1)
     
     features = df[df.columns[:-1]].to_numpy()
@@ -307,6 +308,20 @@ def downsampling(training_features, training_labels, ratio=10):
     #print('After dowmsampling:', len(idx_true), len(idx_false_resampled))
     return resampled_features, resampled_labels
 
+def bootstrapping(training_features, training_labels, ratio=1):
+    '''
+    Bootstrap training features and labels for one round, by default it conducts a 1:1 bootstrap
+
+    Args:
+        features (np.array): feature array, should be in shape (n_samples, n_features)
+        labels (np.array): label array, should be in shape (n_samples,)
+        ratio (int): target bootstrap ratio, default as 1 (same number of samples as input)
+    '''
+    sample_id = range(len(training_labels))
+    sample_id = resample(sample_id, n_samples=len(sample_id)*ratio, replace=True)
+    resampled_features = training_features[sample_id]
+    resampled_labels = training_labels[sample_id]
+    return resampled_features, resampled_labels
     
 def obtain_intervals(dataset):
     '''
@@ -327,6 +342,8 @@ def obtain_intervals(dataset):
         start_time = 1
         unit_period = 1  # unit period: one month
         end_time = start_time + 36*unit_period
+    else:
+        return []
 
     # add one unit for the open-end of range function
     terminals = [i for i in range(start_time, end_time+unit_period, unit_period)]
@@ -405,7 +422,7 @@ class SafeRGF(RGFClassifier):
             super(SafeRGF, self).fit(X, y)
         except Exception:
             self.is_foul = True
-            print('Error fitting the model.')
+            logging.error('......Error fitting the model.')
         else:
             self.is_foul = False
         
