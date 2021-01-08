@@ -21,7 +21,7 @@ import logging
 
 import warnings
 
-#mkl.set_num_threads(1)  # control the number of thread used for NN model
+mkl.set_num_threads(1)  # control the number of thread used for NN model
 N_WORKERS = 1  # control the number of workers used for the RF and GBDT model
 
 INPUT_FOLDER = r'./data/'
@@ -282,6 +282,13 @@ def obtain_metrics(labels, probas):
     ret.append(metrics.roc_auc_score(labels, probas))
     ret.append(metrics.matthews_corrcoef(labels, preds))
     ret.append(metrics.brier_score_loss(labels, probas))
+    ret.append(metrics.average_precision_score(labels, probas))
+    # Data to plot precision - recall curve
+    precision, recall, thresholds = metrics.precision_recall_curve(labels, probas)
+    # Use AUC function to calculate the area under the curve of precision recall curve
+    auc_precision_recall = metrics.auc(recall, precision)
+    ret.append(auc_precision_recall)
+    ret.append(np.sum(labels) / labels.size)
 
     return ret
 

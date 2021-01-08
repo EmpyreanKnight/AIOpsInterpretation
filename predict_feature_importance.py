@@ -38,7 +38,7 @@ def run_experiment_on_period(period_id, training_features, training_labels, test
 
         for i in range(N_ROUNDS):
             logging.info("...Starting iteration %d.", i+1)
-            out_columns = ['Model', 'Iteration', 'Test P', 'Test R', 'Test A', 'Test F', 'Test AUC', 'Test MCC', 'Test B'] + ['Importance_'+str(i) for i in range(training_features.shape[1])]
+            out_columns = ['Model', 'Iteration', 'Test P', 'Test R', 'Test A', 'Test F', 'Test AUC', 'Test MCC', 'Test B', 'Test AP', 'Test AUPRC', 'Test AUPRC baseline'] + ['Importance_'+str(i) for i in range(training_features.shape[1])]
             out_ls = []
 
             if BOOTSTRAP:
