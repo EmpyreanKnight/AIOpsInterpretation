@@ -1,15 +1,15 @@
+# Comment the following two lines if running on windows. Windows does not support "fork"
+from multiprocessing import set_start_method
+set_start_method("fork", force=True)
+
 import os
 import argparse
-import json
-from pickle import FALSE, TRUE
-import numpy as np
 import pandas as pd
-from joblib import dump, load
+from joblib import dump
 from sklearn.preprocessing import StandardScaler
 from sklearn.inspection import permutation_importance
 from utilities import obtain_period_data, obtain_metrics, downsampling, obtain_tuned_model, bootstrapping, obtain_untuned_model
-from multiprocessing import Pool, Queue
-from multiprocessing.pool import ThreadPool
+from multiprocessing import Pool
 import logging
 from multiprocessing_logging import install_mp_handler
 
@@ -20,15 +20,14 @@ SAVE_MODEL = True
 N_ROUNDS = 10
 MODEL_NAME = ['lda', 'qda', 'lr', 'cart', 'gbdt', 'nn', 'rf', 'rgf']
 
-def run_experiment_on_period(period_id, training_features, training_labels, testing_features, testing_labels):
-    global num_periods
-    global OUTPUT_PREFIX
-    global BOOTSTRAP
-    global MODEL_TUNE
-    global DATASET_NAME
+def run_experiment_on_period(period_id, num_periods, debug_periods, OUTPUT_PREFIX, BOOTSTRAP, MODEL_TUNE, training_features, training_labels, testing_features, testing_labels):
+    # skip the period if not in the specified list
+    if (debug_periods is not None) and (period_id not in debug_periods):
+        logging.info("...Skipping period %s.", str(period_id) + '/' + str(num_periods))
+        return
 
     try:
-        logging.info("...Thread for period %s is created.", str(period_id) + '/' + str(num_periods))
+        logging.info("...Process for period %s is created.", str(period_id) + '/' + str(num_periods))
 
         OUTPUT_FILE = OUTPUT_FOLDER + OUTPUT_PREFIX + '_P' + str(period_id) + '.csv'
         # remove the output file if exists
@@ -71,7 +70,7 @@ def run_experiment_on_period(period_id, training_features, training_labels, test
                     
                 # save output (execution info, feature importance, and model evaluation for all except the last period (no testing data for it))
                 if period_id == num_periods:
-                    out_ls.append([learner.upper(), i + 1] + [0.0]*7 + feature_importance.importances_mean.tolist())
+                    out_ls.append([learner.upper(), i + 1] + [0.0]*10 + feature_importance.importances_mean.tolist())
                 else:
                     out_ls.append([learner.upper(), i + 1] + obtain_metrics(testing_labels, model.predict_proba(testing_features)[:, 1]) + feature_importance.importances_mean.tolist())
                 logging.info("......Result saved for learner: %s.", learner)
@@ -82,23 +81,19 @@ def run_experiment_on_period(period_id, training_features, training_labels, test
 
             logging.info("...Results written. Iteration %d complete.", i+1)
 
-        logging.info("Thread for period %s finished.", str(period_id) + '/' + str(num_periods))
+        logging.info("Process for period %s finished.", str(period_id) + '/' + str(num_periods))
 
     except Exception as e:
         logging.error("Unknown error on period %d.", period_id, exc_info=True)        
 
-def experiment_driver(dataset, tuned, bootstrapped):
-    global MODEL_TUNE
+def experiment_driver(dataset, tuned, bootstrapped, debug_periods):
     MODEL_TUNE = tuned
-    global BOOTSTRAP
     BOOTSTRAP = bootstrapped
-    global DATASET_NAME
     DATASET_NAME = 'GOOGLE' if dataset == 'g' else 'BLACKBLAZE'
-    global OUTPUT_PREFIX
     OUTPUT_PREFIX = DATASET_NAME + ('_TUNED_' if MODEL_TUNE else '_UNTUNED_') + ('BOOTSTRAP' if BOOTSTRAP else 'STATIC')
 
     LOG_FILE = LOG_FOLDER + OUTPUT_PREFIX + '.log'
-    print("...Process for %(dataset)s dataset is created. PID: %(pid)d; Log file: %(log)s" % {'dataset': DATASET_NAME, 'pid': os.getpid(), 'log': LOG_FILE})
+    print("...Start running experiment on %(dataset)s dataset. Log file: %(log)s" % {'dataset': DATASET_NAME, 'log': LOG_FILE})
 
     # initialize multiprocess logger
     logging.basicConfig(filename=LOG_FILE, filemode='a', format='[pid%(process)d-tid%(thread)d] %(asctime)s - %(levelname)s - %(message)s', level=logging.INFO)
@@ -127,19 +122,20 @@ def experiment_driver(dataset, tuned, bootstrapped):
             testing_features = scaler.transform(testing_features)
         training_features, training_labels = downsampling(training_features, training_labels)
 
-        downsampled_periods.append((i+1, training_features, training_labels, testing_features, testing_labels))
+        downsampled_periods.append((i+1, num_periods, debug_periods, OUTPUT_PREFIX, BOOTSTRAP, MODEL_TUNE, training_features, training_labels, testing_features, testing_labels))
         logging.info("...Period %d complete...", i+1)
     logging.info("...Scaling and downsampling complete.")
     
-    logging.info("Creating threads for each time period...")
-    period_pool = ThreadPool(8)
+    logging.info("Creating processes for each time period...")
+    period_pool = Pool(8)
     results = period_pool.starmap(run_experiment_on_period, downsampled_periods)
-    logging.info("All threads finished. Experiment for dataset %s complete.", DATASET_NAME)
+    logging.info("All processes finished. Experiment for dataset %s complete.", DATASET_NAME)
 
-    print("...Process for %(dataset)s dataset has finished. PID: %(pid)d; Log file: %(log)s" % {'dataset': DATASET_NAME, 'pid': os.getpid(), 'log': LOG_FILE})
+    print("...Finished running experiment for %(dataset)s dataset. Log file: %(log)s" % {'dataset': DATASET_NAME, 'log': LOG_FILE})
 
 if __name__ == "__main__":
     DATASET = ['g', 'b']
+    PERIODS = None
 
     parser = argparse.ArgumentParser(description='Experiment for RQ1')
     parser.add_argument("-t", help="tune hyperparameters", action='store_true')
@@ -148,17 +144,15 @@ if __name__ == "__main__":
     tuned = args.t
     bootstrapped = args.b
 
+    # For debugging or limiting experiment scope
+    #tuned = True
+    #DATASET = ['g']
+    #PERIODS = [4, 5]
+
     print("Experiment setup: Hyperparameter tuning: " + ('ON' if tuned else 'OFF') + " BOOTSTRAP: " + ('ON' if bootstrapped else 'OFF'))
-    print("Starting a process for each dataset...")
+    print("Start processing each dataset...")
 
-    # For debugging
-    DATASET = ['g']
-
-    exp_list = []
     for data in DATASET:
-        exp_list.append((data, tuned, bootstrapped))
-
-    data_pool = Pool(len(exp_list))
-    results = data_pool.starmap(experiment_driver, exp_list)
+        experiment_driver(data, tuned, bootstrapped, PERIODS)
 
     print('Experiment completed!')
