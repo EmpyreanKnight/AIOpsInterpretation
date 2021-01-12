@@ -63,7 +63,7 @@ def run_experiment_on_period(period_id, num_periods, debug_periods, OUTPUT_PREFI
                 
                 # calculate permutation feature importance
                 logging.info("......Calculating feature importance. Learner: %s.", learner)
-                feature_importance = permutation_importance(model, training_features, training_labels, scoring='roc_auc')
+                feature_importance = permutation_importance(model, training_features, training_labels, scoring='roc_auc', random_state=42)
                 logging.info("......Feature importance calculated. Learner: %s.", learner)
 
                 # store model to the MODEL_FOLDER
