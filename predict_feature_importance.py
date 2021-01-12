@@ -21,6 +21,7 @@ INPUT_FOLDER = r'./data/'
 OUTPUT_FOLDER = r'./outputs/'
 SAVE_MODEL = True
 N_ROUNDS = 10
+N_PROCESS = 16
 MODEL_NAME = ['lda', 'qda', 'lr', 'cart', 'gbdt', 'nn', 'rf']#, 'rgf']
 
 def run_experiment_on_period(period_id, num_periods, debug_periods, OUTPUT_PREFIX, BOOTSTRAP, MODEL_TUNE, training_features, training_labels, testing_features, testing_labels):
@@ -146,7 +147,7 @@ def experiment_driver(dataset, tuned, bootstrapped, is_downsample, debug_periods
         logging.info("...Reading downsampled dataset complete. Number of periods: %d.", len(downsampled_periods))
 
         logging.info("Creating processes for each time period...")
-        period_pool = Pool(8)
+        period_pool = Pool(N_PROCESS)
         results = period_pool.starmap(run_experiment_on_period, downsampled_periods)
         logging.info("All processes finished. Experiment for dataset %s complete.", DATASET_NAME)
 
