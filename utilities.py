@@ -28,7 +28,7 @@ GOOGLE_INPUT_FILE = r'google_job_failure.csv'
 BACKBLAZE_INPUT_FILE = r'disk_failure_v2.csv'
 
 
-def obtain_tuned_model(model_name, features, labels):
+def obtain_tuned_model(model_name, features, labels, controlled):
     '''
     Return the model tuned through random search
     The model is already fit on the whole training data so no more training needed
@@ -36,7 +36,7 @@ def obtain_tuned_model(model_name, features, labels):
     Args:
         model_name: the name of model, need to be all lowercase letter (lda, qda, lr, cart, gbdt, nn, rf, rgf)
     '''
-    model = obtain_untuned_model(model_name)
+    model = obtain_untuned_model(model_name, controlled)
 
     N_ITER = 100
     # control the iteration of random search for time-consuming models
@@ -129,7 +129,7 @@ def obtain_param_dist(model_name):
     return param_dist
 
 
-def obtain_untuned_model(model_name):
+def obtain_untuned_model(model_name, controlled):
     '''
     Return model with default configurations
 
@@ -142,15 +142,15 @@ def obtain_untuned_model(model_name):
     elif model_name == 'qda':
         model = QuadraticDiscriminantAnalysis()
     elif model_name == 'lr':
-        model = LogisticRegression()
+        model = LogisticRegression(random_state=controlled)
     elif model_name == 'cart':
-        model = DecisionTreeClassifier()
+        model = DecisionTreeClassifier(random_state=controlled)
     elif model_name == 'gbdt':
-        model = XGBClassifier(n_jobs=N_WORKERS, use_label_encoder=False)
+        model = XGBClassifier(n_jobs=N_WORKERS, use_label_encoder=False, random_state=controlled)
     elif model_name == 'nn':
-        model = MLPClassifier()
+        model = MLPClassifier(random_state=controlled)
     elif model_name == 'rf':
-        model = RandomForestClassifier(n_jobs=N_WORKERS)
+        model = RandomForestClassifier(n_jobs=N_WORKERS, random_state=controlled)
     elif model_name == 'rgf':
         model = SafeRGF()
     return model
@@ -292,13 +292,14 @@ def obtain_metrics(labels, probas):
     return ret
 
 
-def downsampling(training_features, training_labels, ratio=10):
+def downsampling(training_features, training_labels, controlled, ratio=10):
     '''
     Random downsampling of the training features and labels, by default it downsample to true/false ratio of 1:10
 
     Args:
         features (np.array): feature array, should be in shape (n_samples, n_features)
         labels (np.array): label array, should be in shape (n_samples,)
+        controlled (int, RandomState instance or None): random state for resample
         ratio (int): target downsampling ratio, default as 10 (true/false ratio of 1:10)
     '''
     #return training_features, training_labels
@@ -306,7 +307,7 @@ def downsampling(training_features, training_labels, ratio=10):
     idx_true = np.where(training_labels == True)[0]
     idx_false = np.where(training_labels == False)[0]
     #print('Before dowmsampling:', len(idx_true), len(idx_false))
-    idx_false_resampled = resample(idx_false, n_samples=len(idx_true)*ratio, replace=False)
+    idx_false_resampled = resample(idx_false, n_samples=len(idx_true)*ratio, replace=False, random_state=controlled)
     idx_resampled = np.concatenate([idx_false_resampled, idx_true])
     idx_resampled.sort()
     resampled_features = training_features[idx_resampled]

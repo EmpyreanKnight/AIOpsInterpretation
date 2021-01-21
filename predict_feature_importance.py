@@ -22,9 +22,10 @@ OUTPUT_FOLDER = r'./outputs/'
 SAVE_MODEL = True
 N_ROUNDS = 10
 N_PROCESS = 16
+RANDOM_SEED = 42
 MODEL_NAME = ['lda', 'qda', 'lr', 'cart', 'gbdt', 'nn', 'rf']#, 'rgf']
 
-def run_experiment_on_period(period_id, num_periods, debug_periods, OUTPUT_PREFIX, BOOTSTRAP, MODEL_TUNE, training_features, training_labels, testing_features, testing_labels):
+def run_experiment_on_period(period_id, num_periods, debug_periods, OUTPUT_PREFIX, BOOTSTRAP, MODEL_TUNE, RANDOM, training_features, training_labels, testing_features, testing_labels):
     # skip the period if not in the specified list
     if (debug_periods is not None) and (period_id not in debug_periods):
         logging.info("...Skipping period %s.", str(period_id) + '/' + str(num_periods))
@@ -54,10 +55,10 @@ def run_experiment_on_period(period_id, num_periods, debug_periods, OUTPUT_PREFI
                 logging.info("......Training model. Learner: %s.", learner)
                 if MODEL_TUNE:
                     # tune and fit model
-                    model = obtain_tuned_model(learner, training_features, training_labels)
+                    model = obtain_tuned_model(learner, training_features, training_labels, RANDOM)
                 else:
                     # fit untuned model
-                    model = obtain_untuned_model(learner)
+                    model = obtain_untuned_model(learner, RANDOM)
                     model.fit(training_features, training_labels)
                 logging.info("......Model trained. Learner: %s.", learner)
                 
@@ -92,11 +93,12 @@ def run_experiment_on_period(period_id, num_periods, debug_periods, OUTPUT_PREFI
     except Exception as e:
         logging.error("Unknown error on period %d.", period_id, exc_info=True)        
 
-def experiment_driver(dataset, tuned, bootstrapped, is_downsample, debug_periods):
+def experiment_driver(dataset, tuned, bootstrapped, controlled, is_downsample, debug_periods):
     MODEL_TUNE = tuned
     BOOTSTRAP = bootstrapped
     DATASET_NAME = 'GOOGLE' if dataset == 'g' else 'BLACKBLAZE'
-    OUTPUT_PREFIX = DATASET_NAME + ('_TUNED_' if MODEL_TUNE else '_UNTUNED_') + ('BOOTSTRAP' if BOOTSTRAP else 'STATIC')
+    OUTPUT_PREFIX = DATASET_NAME + ('_TUNED_' if MODEL_TUNE else '_UNTUNED_') + ('BOOTSTRAP_' if BOOTSTRAP else 'STATIC_') + ('CONTROLLED' if controlled else 'RANDOM')
+    RANDOM = RANDOM_SEED if controlled else None
 
     if is_downsample:
         # read full dataset
@@ -119,7 +121,7 @@ def experiment_driver(dataset, tuned, bootstrapped, is_downsample, debug_periods
             training_features = scaler.fit_transform(training_features)
             if i < num_periods - 1:
                 testing_features = scaler.transform(testing_features)
-            training_features, training_labels = downsampling(training_features, training_labels)
+            training_features, training_labels = downsampling(training_features, training_labels, RANDOM)
 
             downsampled_periods.append({"period_id": i+1, "num_period": num_periods, "training_features": training_features, "training_labels": training_labels, \
                                         "testing_features": testing_features, "testing_labels": testing_labels})
@@ -142,7 +144,7 @@ def experiment_driver(dataset, tuned, bootstrapped, is_downsample, debug_periods
         saved_sample = np.load(INPUT_FOLDER + DATASET_NAME + '_downsampled.npy', allow_pickle=True)
         downsampled_periods = []
         for sample in saved_sample:
-            downsampled_periods.append((sample["period_id"], sample["num_period"], debug_periods, OUTPUT_PREFIX, BOOTSTRAP, MODEL_TUNE, \
+            downsampled_periods.append((sample["period_id"], sample["num_period"], debug_periods, OUTPUT_PREFIX, BOOTSTRAP, MODEL_TUNE, RANDOM, \
                                         sample["training_features"], sample["training_labels"], sample["testing_features"], sample["testing_labels"]))
         logging.info("...Reading downsampled dataset complete. Number of periods: %d.", len(downsampled_periods))
 
@@ -160,21 +162,27 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser(description='Experiment for RQ1')
     parser.add_argument("-t", help="tune hyperparameters", action='store_true')
     parser.add_argument("-b", help="bootstrap after downsampling", action='store_true')
+    parser.add_argument("-c", help="control for inherent randomness", action='store_true')
     parser.add_argument("-s", help="downsample the dataset", action='store_true')
     args = parser.parse_args()
     tuned = args.t
     bootstrapped = args.b
     downsample = args.s
+    controlled = args.c
 
     # For debugging or limiting experiment scope
     #tuned = True
+    #bootstrapped = True
+    #controlled = True
     #DATASET = ['g']
-    #PERIODS = [4, 5]
+    #PERIODS = []
 
-    print("Experiment setup: Hyperparameter tuning: " + ('ON' if tuned else 'OFF') + " BOOTSTRAP: " + ('ON' if bootstrapped else 'OFF'))
+    print("Experiment setup: Hyperparameter tuning: " + ('ON' if tuned else 'OFF') \
+                                     + " Bootstrap: " + ('ON' if bootstrapped else 'OFF') \
+                                     + " Inherent randomness: " + ('CONTROLLED' if controlled else 'RANDOM'))
     print("Start processing each dataset...")
 
     for data in DATASET:
-        experiment_driver(data, tuned, bootstrapped, downsample, PERIODS)
+        experiment_driver(data, tuned, bootstrapped, controlled, downsample, PERIODS)
 
     print('Experiment completed!')
