@@ -1,52 +1,53 @@
 import numpy as np
 from sklearn.model_selection import KFold
 from sklearn.metrics import mean_squared_error
-from utilities import obtain_tuned_model, downsampling
+from utilities import downsampling
 from sklearn.preprocessing import StandardScaler
+from sklearn.base import BaseEstimator
+from sklearn.base import clone
+
 
 MSE_R = 0.25
 EPS = 1e-5
 
 
-class EnsembleModel(object):
-    def __init__(self, model_name, ensemble_size, dataset):
+class EnsembleModel(BaseEstimator):
+    def __init__(self, model_name, ensemble_size):
         self.name = "Base ensemble"
         self.models = []
         self.weights = []
         self.scalers = []
         self.add = False
-        self.dataset = dataset
         self.model_name = model_name
         self.ensemble_size = ensemble_size
 
-    def fit(self, X, y, period):
+    def fit(self, X, y):
         pass
                 
     def predict_proba(self, X):
-        probas = np.array([self.models[i].predict_proba(self.scalers[i].transform(X))[:, 1] for i in range(len(self.models))])
+        probas = np.array([self.models[i].predict_proba(self.scalers[i].transform(X)) for i in range(len(self.models))])
+        if sum(self.weights) == 0:
+            return np.clip(np.average(probas, axis=0), 0.0, 1.0)
         return np.clip(np.average(probas, axis=0, weights=self.weights), 0.0, 1.0)
-
+        
+    def predict(self, X):
+        return self.predict_proba(X)[:, 1] > 0.5
+        
     def get_name(self):
         return self.name
     
-    def is_added(self):
+    def has_new_classifier(self):
         return self.add
 
 
 class SEAModel(EnsembleModel):
-    def __init__(self, model_name, ensemble_size, dataset):
-        super().__init__(model_name, ensemble_size, dataset)
+    def __init__(self, model_name, ensemble_size):
+        super().__init__(model_name, ensemble_size)
         self.name = "SEA"
         self.last_model = None
         self.last_scaler = None
     
-    def fit(self, X, y, period):
-        model = obtain_tuned_model(self.model_name, self.dataset, period, 'p')
-        scaler = StandardScaler()
-        X = scaler.fit_transform(X)
-        X, y = downsampling(X, y)
-        model.fit(X, y)
-
+    def fit(self, X, y, model, scaler):
         if self.last_model == None: # first model
             self.last_model = model
             self.last_scaler = scaler
@@ -102,28 +103,22 @@ class SEAModel(EnsembleModel):
 
     def predict_proba(self, X):
         if len(self.models) == 0:
-            return self.last_model.predict_proba(self.last_scaler.transform(X))[:, 1]
-        probas = np.array([self.models[i].predict_proba(self.scalers[i].transform(X))[:, 1] for i in range(len(self.models))])
+            return self.last_model.predict_proba(self.last_scaler.transform(X))
+        probas = np.array([self.models[i].predict_proba(self.scalers[i].transform(X)) for i in range(len(self.models))])
         return np.clip(np.average(probas, axis=0), 0.0, 1.0)
 
 
 class AWEModel(EnsembleModel):
-    def __init__(self, model_name, ensemble_size, dataset):
-        super().__init__(model_name, ensemble_size, dataset)
+    def __init__(self, model_name, ensemble_size):
+        super().__init__(model_name, ensemble_size)
         self.name = "AWE"
         
-    def fit(self, X, y, period):
-        model = obtain_tuned_model(self.model_name, self.dataset, period, 'p')
-        scaler = StandardScaler()
-        weight = MSE_R - self.MSE_with_CV(X, y, period)
-
-        X = scaler.fit_transform(X)
-        X, y = downsampling(X, y)
-        model.fit(X, y)
+    def fit(self, X, y, model, scaler):
+        weight = MSE_R - self.MSE_with_CV(X, y, model)
         
         for idx in range(len(self.models)):
-            proba = self.models[idx].predict_proba(self.scalers[idx].transform(X))[:, 1]
-            mse = mean_squared_error(y, proba)
+            probas = self.models[idx].predict_proba(self.scalers[idx].transform(X))[:, 1]
+            mse = mean_squared_error(y, probas)
             self.weights[idx] = max(0, MSE_R - mse)
 
         if len(self.models) < self.ensemble_size:
@@ -141,9 +136,9 @@ class AWEModel(EnsembleModel):
             else:
                 self.add = False
    
-    def MSE_with_CV(self, X, y, period):
+    def MSE_with_CV(self, X, y, base_model):
         kf = KFold(n_splits=10, shuffle=False)
-        model = obtain_tuned_model(self.model_name, self.dataset, period, 'p')
+        model = clone(base_model)
         mse_list = []
         for training_index, testing_index in kf.split(X):
             training_features, training_labels = X[training_index], y[training_index]

@@ -277,6 +277,11 @@ def obtain_metrics(labels, probas):
     ret.append(metrics.roc_auc_score(labels, probas))
     ret.append(metrics.matthews_corrcoef(labels, preds))
 
+    p, r, _ = metrics.precision_recall_curve(labels, probas)
+    prc = metrics.auc(r, p)
+    ret.append(prc)
+    #ret.append(metrics.brier_score_loss(labels, probas))
+
     return ret
 
 
@@ -415,3 +420,4 @@ class SafeRGF(RGFClassifier):
             return np.zeros(X.shape[0]).astype(bool)
         else:
             return super(SafeRGF, self).predict(X)
+
