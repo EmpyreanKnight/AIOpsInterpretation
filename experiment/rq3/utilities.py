@@ -23,8 +23,7 @@ import warnings
 mkl.set_num_threads(1)  # control the number of thread used for NN model
 N_WORKERS = 1  # control the number of workers used for the RF and GBDT model
 
-#INPUT_FOLDER = r'/home/local/SAIL/yingzhe/ops_data/Google_cluster_data/clusterdata-2011-2/google_job/'
-INPUT_FOLDER = r'./'
+INPUT_FOLDER = r'../../data/'
 GOOGLE_INPUT_FILE = r'google_job_failure.csv'
 BACKBLAZE_INPUT_FILE = r'disk_failure_v2.csv'
 

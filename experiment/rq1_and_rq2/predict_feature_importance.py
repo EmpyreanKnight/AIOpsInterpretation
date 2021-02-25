@@ -17,13 +17,13 @@ from multiprocessing_logging import install_mp_handler
 
 LOG_FOLDER = r'./logs/'
 MODEL_FOLDER = r'./saved_models/'
-INPUT_FOLDER = r'./data/'
+INPUT_FOLDER = r'../../data/'
 OUTPUT_FOLDER = r'./outputs/'
 SAVE_MODEL = True
 N_ROUNDS = 10
 N_PROCESS = 16
 RANDOM_SEED = 42
-MODEL_NAME = ['lda', 'qda', 'lr', 'cart', 'gbdt', 'nn', 'rf']#, 'rgf']
+MODEL_NAME = ['lda', 'qda', 'lr', 'cart', 'gbdt', 'nn', 'rf']
 
 def run_experiment_on_period(period_id, num_periods, debug_periods, OUTPUT_PREFIX, BOOTSTRAP, MODEL_TUNE, RANDOM, training_features, training_labels, testing_features, testing_labels):
     # skip the period if not in the specified list
@@ -47,7 +47,7 @@ def run_experiment_on_period(period_id, num_periods, debug_periods, OUTPUT_PREFI
             out_ls = []
 
             if BOOTSTRAP:
-                training_features, training_labels = bootstrapping(training_features, training_labels)
+                training_features, training_labels = bootstrapping(training_features, training_labels, RANDOM + i if RANDOM is not None else None)
                 logging.info("......Sample bootstrapped for iteration %d.", i+1)
 
             for learner in MODEL_NAME:

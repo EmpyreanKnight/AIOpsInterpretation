@@ -23,7 +23,7 @@ import warnings
 mkl.set_num_threads(1)  # control the number of thread used for NN model
 N_WORKERS = 1  # control the number of workers used for the RF and GBDT model
 
-INPUT_FOLDER = r'./data/'
+INPUT_FOLDER = r'../../data/'
 GOOGLE_INPUT_FILE = r'google_job_failure.csv'
 BACKBLAZE_INPUT_FILE = r'disk_failure_v2.csv'
 
@@ -315,7 +315,7 @@ def downsampling(training_features, training_labels, controlled, ratio=10):
     #print('After dowmsampling:', len(idx_true), len(idx_false_resampled))
     return resampled_features, resampled_labels
 
-def bootstrapping(training_features, training_labels, ratio=1):
+def bootstrapping(training_features, training_labels, controlled, ratio=1):
     '''
     Bootstrap training features and labels for one round, by default it conducts a 1:1 bootstrap
 
@@ -325,7 +325,7 @@ def bootstrapping(training_features, training_labels, ratio=1):
         ratio (int): target bootstrap ratio, default as 1 (same number of samples as input)
     '''
     sample_id = range(len(training_labels))
-    sample_id = resample(sample_id, n_samples=len(sample_id)*ratio, replace=True)
+    sample_id = resample(sample_id, n_samples=len(sample_id)*ratio, replace=True, random_state=controlled)
     resampled_features = training_features[sample_id]
     resampled_labels = training_labels[sample_id]
     return resampled_features, resampled_labels

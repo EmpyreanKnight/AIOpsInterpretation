@@ -1,0 +1,1481 @@
+---
+title: AIOps analysis
+output: html_document
+editor_options: 
+  chunk_output_type: console
+---
+
+# Setups
+
+## Libraries
+
+```{r}
+# Import libraries
+
+require(ggpubr, quietly = TRUE)
+require(effsize, quietly = TRUE)
+require(xtable, quietly = TRUE)
+require(ScottKnott, quietly = TRUE)
+require(gtools, quietly = TRUE)
+require(stringi, quietly = TRUE)
+require(stringr, quietly = TRUE)
+require(scales, quietly = TRUE)
+require(tidyr, quietly = TRUE)
+require(ggplot2, quietly = TRUE)
+require(dplyr, quietly = TRUE)
+require(corrplot, quietly = TRUE)
+require(BAMMtools, quietly = TRUE)
+require(reshape2, quietly = TRUE)
+require(gridExtra, quietly = TRUE)
+require(effsize, quietly = TRUE)
+require(irr, quietly = TRUE)
+require(VGAM, quietly = TRUE)
+require(forcats, quietly = TRUE)
+
+```
+
+## Read dataset
+
+```{r}
+# Experiment settings
+
+tuned_ls <- c("TUNED", "UNTUNED")
+bootstrap_ls <- c("BOOTSTRAP", "STATIC")
+control_ls <- c("RANDOM", "CONTROLLED")
+dataset_ls <- c("GOOGLE", "BLACKBLAZE")
+model_ls <- c('LDA', 'QDA', 'LR', 'CART', 'GBDT', 'NN', 'RF')
+approaches<-c('SEA','AWE','Sliding Window','Full History') # history window
+period_ls <- c(28, 36)
+names(period_ls) <- dataset_ls
+```
+
+```{r}
+# Read RQ1 and RQ2 experiment outputs into one nested list.
+# Structure: data[[dataset]][[bootstrap]][[tuned]][[period]]
+
+data <- list(
+    "GOOGLE" = list(
+        "BOOTSTRAP" = list(
+            "TUNED" = list(
+                "RANDOM" = c()
+            ),
+            "UNTUNED" = list(
+                "CONTROLLED" = c()
+            )
+        ),
+        "STATIC" = list(
+            "TUNED" = list(
+                "CONTROLLED" = c()
+            ),
+            "UNTUNED" = list(
+                "RANDOM" = c(),
+                "CONTROLLED" = c()
+            )
+        )
+    ),
+    "BLACKBLAZE" = list(
+        "BOOTSTRAP" = list(
+            "TUNED" = list(
+                "RANDOM" = c()
+            ),
+            "UNTUNED" = list(
+                "CONTROLLED" = c()
+            )
+        ),
+        "STATIC" = list(
+            "TUNED" = list(
+                "CONTROLLED" = c()
+            ),
+            "UNTUNED" = list(
+                "RANDOM" = c(),
+                "CONTROLLED" = c()
+            )
+        )
+    )
+)
+
+for (dataset in dataset_ls) {
+    for (bootstrap in bootstrap_ls) {
+        for (tuned in tuned_ls) {
+            if (bootstrap == "BOOTSTRAP" & tuned == "TUNED") {
+                control_ls <- c("RANDOM")
+            } else if (bootstrap == "BOOTSTRAP" & tuned == "UNTUNED") {
+                control_ls <- c("CONTROLLED")
+            } else if (bootstrap == "STATIC" & tuned == "TUNED") {
+                control_ls <- c("CONTROLLED")
+            } else if (bootstrap == "STATIC" & tuned == "UNTUNED") {
+                control_ls <- c("RANDOM", "CONTROLLED")
+            }
+            for (controlled in control_ls) {
+                if (controlled == "RANDOM") {
+                    control_text <- ""
+                } else {
+                    control_text <- "_CONTROLLED"
+                }
+                for (period in 1:period_ls[dataset]) {
+                    url <- paste("https://lindayi.me/downloads/aiops/",
+                                 dataset, "_", tuned, "_", bootstrap, control_text, "_P", period, ".csv", 
+                                 sep = "")
+                    data[[dataset]][[bootstrap]][[tuned]][[controlled]][[period]] <- read.csv(url)
+                }
+            }
+
+        }
+    }
+}
+```
+
+**To use a specific dataframe:** `data[[dataset]][[bootstrap]][[tuned]][[controlled]][[period]]`
+
+```{r}
+# Read RQ3 experiment outputs on last period into one nested list.
+
+data_rq3 <- list(
+    "GOOGLE" = list(),
+    "BLACKBLAZE" = list()
+)
+
+models_rq3 <- tolower(model_ls)
+
+for (dataset in dataset_ls) {
+    if (dataset == "GOOGLE") {
+        ds_name <- 'google'
+        period_rq3 <- 27
+    } else {
+        ds_name <- 'disk'
+        period_rq3 <- 35
+    }
+    for(model in models_rq3){
+        url <- paste("https://lindayi.me/downloads/aiops/temporal/update_",
+                     ds_name, "_", model,".csv",sep = "")
+        tmp <- read.csv(url)
+        for(approach in approaches){
+            if (approach == "Full History") {
+                approach_text <- "History Window"
+            } else {
+                approach_text <- approach
+            }
+            data_rq3[[dataset]][[toupper(model)]][[toupper(approach)]] <-  tmp[tmp$Scenario==approach_text & tmp$Period==period_rq3,]
+            data_rq3[[dataset]][[toupper(model)]][[toupper(approach)]]$Scenario <- approach
+        }
+    }
+}
+```
+
+```{r}
+# Read RQ3 experiment outputs into one nested list.
+
+data_rq3_ground_truth <- list(
+    "GOOGLE" = list(),
+    "BLACKBLAZE" = list()
+)
+
+models_rq3<-tolower(model_ls)
+
+for (dataset in dataset_ls) {
+    if (dataset == "GOOGLE") {
+        ds_name <- 'google'
+        period_rq3 <- c(14:27)
+    } else {
+        ds_name <- 'disk'
+        period_rq3 <- c(18:35)
+    }
+    for(model in models_rq3){
+        url <- paste("https://lindayi.me/downloads/aiops/temporal/update_",
+                     ds_name, "_", model,".csv",sep = "")
+        tmp <- read.csv(url)
+        for(approach in approaches){
+            if (approach == "Full History") {
+                approach_text <- "History Window"
+            } else {
+                approach_text <- approach
+            }
+
+            for(pr_rq3 in period_rq3){
+                data_rq3_ground_truth[[dataset]][[toupper(model)]][[toupper(approach)]][[pr_rq3]] <- tmp[tmp$Scenario==approach_text&tmp$Period==pr_rq3,]
+                data_rq3_ground_truth[[dataset]][[toupper(model)]][[toupper(approach)]][[pr_rq3]]$Scenario <- approach
+            }
+        }
+    }
+}
+```
+
+**To use a specific dataframe:**
+
+`data_rq3[[dataset]][[model]][[approach]]`
+
+`data_rq3[[dataset]][[model]][[approach]][[period]]`
+
+## Helper functions
+
+```{r}
+compute_sk_feature <- function(data, dataset, model, period, tuned, bootstrap) {
+    df<-data[[dataset]][[bootstrap]][[tuned]][[period]]
+    df_m <- df[df$Model == model,][colnames(df)[13:length(colnames(df))]]
+    sk <- with(gather(df_m), SK(x=key, y=value, model='y~x', which='x'))
+    capture.output(sk <- summary(sk), file='NUL')
+    sk <- data.frame(Feature=sk$Levels, Rank=as.integer(as.factor(sk$`SK(5%)`)))
+    return (sk)
+}
+```
+
+```{r}
+compute_overlap_between_two_runs <- function(sk_1, sk_2, topn) {
+    model1_features <- sk_1 %>% filter(Rank %in% 1:topn) %>% pull(Feature)
+    model2_features <- sk_2 %>% filter(Rank %in% 1:topn) %>% pull(Feature)
+    overlap = length(intersect(model1_features, model2_features)) / length(union(model1_features, model2_features))
+    return (overlap)
+}
+```
+
+```{r}
+compute_stability_within_one_run <- function(data, dataset, model, period, tuned, bootstrap, controlled, topn) {
+    df <- data[[dataset]][[bootstrap]][[tuned]][[controlled]][[period]]
+    df <- df[df$Model == model,][colnames(df)[13:length(colnames(df))]]
+
+    intersect_set = NA
+    union_set = NA
+    for (i in 1:(nrow(df))) {
+        temp <- df[i,]
+        temp <- temp[, !sapply(temp, function(x) x < 0.0001 )]
+        df_rank_i = data.frame(rank(df[i,],ties.method="min"))
+        df_rank_i <- cbind("Feature" = rownames(df_rank_i), df_rank_i)
+        colnames(df_rank_i)[2] <- "Rank"
+        real_topn_including_duplicate = tail(head(sort(unique(df_rank_i$Rank)),topn),1)
+        run_features <- df_rank_i %>% filter(Rank %in% 1:real_topn_including_duplicate) %>% pull(Feature)
+        if (i == 1) {
+            intersect_set = as.character(run_features)
+            union_set = as.character(run_features)
+        } else {
+            intersect_set = intersect(intersect_set, run_features)
+            union_set = union(union_set, run_features)
+        }
+    }
+    return (length(intersect_set)/length(union_set))
+}
+```
+
+```{r}
+compute_stability_within_one_df <- function(df, dataset, period, tuned, bootstrap, topn) {
+    df <- df[colnames(df)[13:length(colnames(df))]]
+    intersect_set = NA
+    union_set = NA
+    df[df<0] <- 0
+    for (i in 1:(nrow(df))) {
+        temp <- df[i,]
+        temp <- temp[, !sapply(temp, function(x) x < 0.0001 )]
+        df_rank_i = data.frame(rank(-temp,ties.method="min"))
+        df_rank_i <- cbind("Feature" = rownames(df_rank_i), df_rank_i)
+        colnames(df_rank_i)[2] <- "Rank"
+        real_topn_including_duplicate = tail(head(sort(unique(df_rank_i$Rank)),topn),1)
+        run_features <- df_rank_i %>% filter(Rank %in% 1:real_topn_including_duplicate) %>% pull(Feature)
+        if (i == 1) {
+            intersect_set = as.character(run_features)
+            union_set = as.character(run_features)
+        } else {
+            intersect_set = intersect(intersect_set, run_features)
+            union_set = union(union_set, run_features)
+        }
+    }
+    return (length(intersect_set)/length(union_set))
+}
+```
+
+```{r}
+compute_stability_within_one_df_voting <- function(df, dataset, period, tuned, bootstrap, topn) {
+    df <- df[colnames(df)[13:length(colnames(df))]]
+    intersect_set = NA
+    union_set = NA
+    df[df<0] <- 0
+    for (i in 1:(nrow(df))) {
+        temp <- df[i,]
+        temp <- temp[, !sapply(temp, function(x) x < 0.0001 )]
+        df_rank_i = data.frame(rank(-temp,ties.method="min"))
+        df_rank_i <- cbind("Feature" = rownames(df_rank_i), df_rank_i)
+        colnames(df_rank_i)[2] <- "Rank"
+        real_topn_including_duplicate = tail(head(sort(unique(df_rank_i$Rank)),topn),1)
+        run_features <- df_rank_i %>% filter(Rank %in% 1:real_topn_including_duplicate) %>% pull(Feature)
+        if(i==1) {
+            voting_set = as.character(run_features)
+        } else {
+            voting_set = c(voting_set,run_features)
+        }
+    }
+    threshold_voting <- ceiling((2*nrow(df))/3)
+    all_features <- length(unique(voting_set))
+    voting_df <- data.frame(table(voting_set))
+    overlap_voting_features <- voting_df[voting_df$Freq >= threshold_voting, ]
+    return (nrow(overlap_voting_features) / all_features)
+}
+```
+
+```{r}
+#Function to compute Kendall's W
+
+compute_kendall_w <- function(df) {
+    df <- df[colnames(df)[13:length(colnames(df))]]
+    result_matrix<-matrix(nrow=ncol(df),ncol=nrow(df))
+    df[df<0.0001] <- 0
+    for (i in 1:(nrow(df))) {
+        temp <- df[i,]
+        df_rank_i = data.frame(rank(-temp,ties.method="min"))
+        colnames(df_rank_i)[1] <- "Rank"
+        result_matrix[,i]<-as.matrix((df_rank_i))
+    }
+    return(kendall(result_matrix,correct=TRUE))
+}
+```
+
+```{r}
+cal_wss = function(values,group) {
+    if (is.numeric(group)){
+        group = factor(group)
+    }
+    sum((aov(values ~ group)$residuals^2))
+}
+
+j_calc <- function(i) {
+    Jenk = getJenksBreaks(performance,i+1)
+    Jenk = unique(Jenk)
+    if(length(Jenk)>2){
+        clus = cut(performance,breaks=Jenk,include.lowest =TRUE)
+        return(cal_wss(performance,clus))
+    } else {
+        return(NaN)
+    }
+}
+```
+
+# RQs
+
+## RQ1: Are the interpretations from AIOps model internally consistent?
+
+### RQ1.1. model inherent randomness
+
+```{r}
+# stability
+output_model_randomness <- NA
+for (m in model_ls) {
+    for (dataset in dataset_ls) {
+        for (p in 1:(period_ls[dataset]-1)) {
+            for (topn in c(1,3,5)) {
+                #tuned_res <- compute_stability_within_one_run(data, dataset, m, p, "TUNED", "STATIC", "CONTROLLED", topn)
+                untuned_res <- compute_stability_within_one_run(data, dataset, m, p, "UNTUNED", "STATIC", "RANDOM", topn)
+                res_i = data.frame(Model = m, Period = p, res = untuned_res, Dataset= dataset, topn=topn)
+                if (typeof(output_model_randomness) != 'list') {
+                    output_model_randomness <- res_i
+                } else {
+                    output_model_randomness<- rbind(output_model_randomness, res_i)
+                }
+            }
+        }
+    }
+}
+head(output_model_randomness)
+```
+
+```{r}
+output_model_randomness_kendall <- NA
+for (m in model_ls) {
+    for (dataset in dataset_ls) {
+        for (p in 1:(period_ls[dataset]-1)) {
+            df_untuned <- data[[dataset]][["STATIC"]][["UNTUNED"]][["RANDOM"]][[p]]
+            #df_tuned <- data[[dataset]][["STATIC"]][["TUNED"]][[p]]
+            df_untuned <- df_untuned[df_untuned$Model == m,]
+            #df_tuned <- df_tuned[df_tuned$Model == m,]
+            res_untuned <- compute_kendall_w(df_untuned)$value
+            #res_tuned <- compute_kendall_w(df_tuned)$value
+            res_i = data.frame(Model = m, Period = p, res = res_untuned, Dataset= dataset)
+            if (typeof(output_model_randomness_kendall) != 'list') {
+                output_model_randomness_kendall <- res_i
+            } else {
+                output_model_randomness_kendall <- rbind(output_model_randomness_kendall, res_i)
+            }
+        }
+    }
+}
+head(output_model_randomness_kendall)
+```
+
+```{r}
+# Top 5 overlap
+top_5_frame <- output_model_randomness[output_model_randomness$topn==5,]
+top_5_frame$measure <- "Top 5 Overlap"
+
+# Top 3 overlap
+top_3_frame <- output_model_randomness[output_model_randomness$topn==3,]
+top_3_frame$measure <- "Top 3 Overlap"
+
+# Top 1 overlap
+#top_1_frame<-output_model_randomness[output_model_randomness$topn==1,]
+
+# Kendall's W
+kendall_frame <- output_model_randomness_kendall
+kendall_frame$measure = "Kendall's W"
+kendall_frame$topn = 0
+
+result_plot <- rbind(top_5_frame, top_3_frame, kendall_frame)
+ggplot(data=result_plot,aes(x=Period,y=res,group=measure,col=measure))+geom_line()+facet_wrap(~Model+Dataset, nrow=2)+ylab("Value")
+```
+
+
+### RQ1.2. hyperparameter tuning randomness
+
+```{r}
+
+# stability
+output_tuning_randomness <- NA
+for (m in model_ls) {
+    for (dataset in dataset_ls) {
+        for (p in 1:(period_ls[dataset]-1)) {
+            for (topn in c(1,3,5)) {
+                tuned_res <- compute_stability_within_one_run(data, dataset, m, p, "TUNED", "STATIC", "CONTROLLED", topn)
+                #untuned_res <- compute_stability_within_one_run(data, dataset, m, p, "UNTUNED", "STATIC", "RANDOM", topn)
+                res_i = data.frame(Model = m, Period = p, res = tuned_res, Dataset= dataset, topn=topn)
+                if (typeof(output_tuning_randomness) != 'list') {
+                    output_tuning_randomness <- res_i
+                } else {
+                    output_tuning_randomness<- rbind(output_tuning_randomness, res_i)
+                }
+            }
+        }
+    }
+}
+head(output_tuning_randomness)
+```
+
+```{r}
+output_tuning_randomness_kendall <- NA
+for (m in model_ls) {
+    for (dataset in dataset_ls) {
+        for (p in 1:(period_ls[dataset]-1)) {
+            #df_untuned <- data[[dataset]][["STATIC"]][["UNTUNED"]][["RANDOM"]][[p]]
+            df_tuned <- data[[dataset]][["STATIC"]][["TUNED"]][["CONTROLLED"]][[p]]
+            #df_untuned <- df_untuned[df_untuned$Model == m,]
+            df_tuned <- df_tuned[df_tuned$Model == m,]
+            #res_untuned <- compute_kendall_w(df_untuned)$value
+            res_tuned <- compute_kendall_w(df_tuned)$value
+            res_i = data.frame(Model = m, Period = p, res = res_tuned, Dataset= dataset)
+            if (typeof(output_tuning_randomness_kendall) != 'list') {
+                output_tuning_randomness_kendall <- res_i
+            } else {
+                output_tuning_randomness_kendall <- rbind(output_tuning_randomness_kendall, res_i)
+            }
+        }
+    }
+}
+head(output_tuning_randomness_kendall)
+```
+
+```{r}
+# Top 5 overlap
+top_5_frame <- output_tuning_randomness[output_tuning_randomness$topn==5,]
+top_5_frame$measure <- "Top 5 Overlap"
+
+# Top 3 overlap
+top_3_frame <- output_tuning_randomness[output_tuning_randomness$topn==3,]
+top_3_frame$measure <- "Top 3 Overlap"
+
+# Top 1 overlap
+#top_1_frame<-output_tuning_randomness[output_tuning_randomness$topn==1,]
+
+# Kendall's W
+kendall_frame <- output_tuning_randomness_kendall
+kendall_frame$measure = "Kendall's W"
+kendall_frame$topn = 0
+
+result_plot <- rbind(top_5_frame, top_3_frame, kendall_frame)
+ggplot(data=result_plot,aes(x=Period,y=res,group=measure,col=measure))+geom_line()+facet_wrap(~Model+Dataset, nrow=2)+ylab("Value")
+```
+
+
+### RQ1.3. sampling randomness
+
+```{r}
+# stability
+output_data_randomness <- NA
+for (m in model_ls) {
+  for (dataset in dataset_ls) {
+    for (p in 1:(period_ls[dataset]-1)) {
+      for (topn in c(1,3,5)) {
+        #tuned_res <- compute_stability_within_one_run(data, dataset, m, p, "TUNED", "BOOTSTRAP", topn)
+        untuned_res <- compute_stability_within_one_run(data, dataset, m, p, "UNTUNED", "BOOTSTRAP", "CONTROLLED", topn)
+        res_i = data.frame(Model = m, Period = p, untuned_res = untuned_res, Dataset= dataset, topn=topn)
+        if (typeof(output_data_randomness) != 'list') {
+          output_data_randomness <- res_i
+        } else {
+          output_data_randomness <- rbind(output_data_randomness, res_i)
+        }
+      }
+    }
+  }
+}
+head(output_data_randomness)
+```
+
+```{r}
+output_data_randomness_kendall <- NA
+for (m in model_ls) {
+    for (dataset in dataset_ls) {
+        for (p in 1:(period_ls[dataset]-1)) {
+            df_untuned <- data[[dataset]][["BOOTSTRAP"]][["UNTUNED"]][["CONTROLLED"]][[p]]
+            df_untuned <- df_untuned[df_untuned$Model == m,]
+            res_untuned <- compute_kendall_w(df_untuned)$value
+            res_i = data.frame(Model = m, Period = p, untuned_res = res_untuned, Dataset= dataset)
+            if (typeof(output_data_randomness_kendall) != 'list') {
+                output_data_randomness_kendall <- res_i
+            } else {
+                output_data_randomness_kendall <- rbind(output_data_randomness_kendall, res_i)
+            }
+        }
+    }
+}
+head(output_data_randomness_kendall)
+```
+
+```{r}
+# Top 5 overlap
+
+top_5_frame_tu<-output_data_randomness[output_data_randomness$topn==5,]
+top_5_frame_tu$measure = "Top 5 Overlap"
+
+# Top 3 overlap
+top_3_frame_tu<-output_data_randomness[output_data_randomness$topn==3,]
+top_3_frame_tu$measure = "Top 3 Overlap"
+
+# Kendall's W
+kendall_frame_tu <- output_data_randomness_kendall
+kendall_frame_tu$measure = "Kendall's W"
+kendall_frame_tu$topn = 0
+
+result_plot <- rbind(top_5_frame_tu, top_3_frame_tu, kendall_frame_tu)
+ggplot(data=result_plot,aes(x=Period,y=untuned_res,group=measure,col=measure))+geom_line()+facet_wrap(~Model+Dataset, nrow=2)+ylab("Value")
+```
+
+### RQ1.4. controlling everything
+
+```{r}
+
+# stability
+output_full_control <- NA
+for (m in model_ls) {
+  for (dataset in dataset_ls) {
+    for (p in 1:(period_ls[dataset]-1)) {
+      for (topn in c(1,3,5)) {
+        res <- compute_stability_within_one_run(data, dataset, m, p, "UNTUNED", "STATIC", "CONTROLLED", topn)
+        res_i = data.frame(Model = m, Period = p, res = res, Dataset= dataset, topn=topn)
+        if (typeof(output_full_control) != 'list') {
+          output_full_control <- res_i
+        } else {
+          output_full_control <- rbind(output_full_control, res_i)
+        }
+      }
+    }
+  }
+}
+head(output_full_control)
+```
+
+```{r}
+output_full_control_kendall <- NA
+for (m in model_ls) {
+    for (dataset in dataset_ls) {
+        for (p in 1:(period_ls[dataset]-1)) {
+            df_untuned <- data[[dataset]][["STATIC"]][["UNTUNED"]][["CONTROLLED"]][[p]]
+            df_untuned <- df_untuned[df_untuned$Model == m,]
+            res_untuned <- compute_kendall_w(df_untuned)$value
+            res_i = data.frame(Model = m, Period = p, res = res_untuned, Dataset= dataset)
+            if (typeof(output_full_control_kendall) != 'list') {
+                output_full_control_kendall <- res_i
+            } else {
+                output_full_control_kendall <- rbind(output_full_control_kendall, res_i)
+            }
+        }
+    }
+}
+head(output_full_control_kendall)
+```
+
+```{r}
+
+# Top 5 overlap
+
+top_5_frame_tu<-output_full_control[output_full_control$topn==5,]
+top_5_frame_tu$measure = "Top 5 Overlap"
+
+# Top 3 overlap
+top_3_frame_tu<-output_full_control[output_full_control$topn==3,]
+top_3_frame_tu$measure = "Top 3 Overlap"
+
+# Kendall's W
+kendall_frame_tu <- output_full_control_kendall
+kendall_frame_tu$measure = "Kendall's W"
+kendall_frame_tu$topn = 0
+
+result_plot <- rbind(top_5_frame_tu, top_3_frame_tu, kendall_frame_tu)
+ggplot(data=result_plot,aes(x=Period,y=res,group=measure,col=measure))+geom_line()+facet_wrap(~Model+Dataset, nrow=2)+ylab("Value")
+```
+
+**Conclusion:** Controlling all three sources yield consistent interpretation.
+
+```{r}
+
+# Discussion: Which source of randomness contributes the most to the instability of model interpretation?
+
+output_full_control_kendall$Source <- "None"
+output_data_randomness_kendall$Source <- "Data sampling"
+names(output_data_randomness_kendall)[names(output_data_randomness_kendall) == "untuned_res"] <- "res"
+output_tuning_randomness_kendall$Source <- "Hyperparameter tuning"
+output_model_randomness_kendall$Source <- "ML learner"
+
+output_discussion_random <- rbind(output_full_control_kendall, output_data_randomness_kendall, output_tuning_randomness_kendall, output_model_randomness_kendall)
+
+output_discussion_random[output_discussion_random$Dataset == "BLACKBLAZE",]$Dataset<-"BACKBLAZE"
+
+ggplot(output_discussion_random, aes(y=res, fill=factor(Source, levels = c("None", "ML learner", "Hyperparameter tuning", "Data sampling")))) + geom_boxplot(lwd=0,   outlier.size = 0) + facet_wrap(~Model+Dataset, nrow=2) + labs(fill = "Source of Randomness (left to right):") + ylab("Kendall's W") + theme(axis.ticks.x=element_blank(), axis.text.x=element_blank(), legend.position="bottom")
+```
+
+## RQ2: Are the interpretations from AIOps models externally consistent?
+
+```{r}
+# use tuned/bootstrap experiments
+
+# for each period in each dataset, collect 70 (7*10) AUC performance results
+# do 1-D clustering on 70 performance results
+# for each group of clustering, calculate the stability based on importance ranks
+
+period_ls <- c(28, 36)
+names(period_ls) <- dataset_ls
+
+output_jenks_clusters<-list()
+bootstrap <- "BOOTSTRAP"
+tuned <- "TUNED"
+controlled <- "RANDOM"
+
+for (dataset in dataset_ls) {
+    for (p in (1:(period_ls[dataset]-1))) {
+        df <- data[[dataset]][[bootstrap]][[tuned]][[controlled]][[p]]
+        # clustering on the df for AUC/perf metrics
+        performance<-df$Test.AUC
+        j_withinss = sapply(2:15, j_calc)
+        output_jenks_clusters[[length(output_jenks_clusters)+1]] <- j_withinss
+    }
+}
+
+output_jenks_final<-do.call('rbind',lapply(output_jenks_clusters,function(x) x))
+```
+
+Support of one-d clustering : <https://posl.ait.kyushu-u.ac.jp/~kamei/publications/Rajbahadur_TSE2019.pdf>
+
+```{r}
+output_jenks_plot<-output_jenks_final
+output_jenks_plot<-as.data.frame(output_jenks_plot)
+colnames(output_jenks_plot)<-paste0('k_',2:15)
+output_jenks_plot$period<-c(1:27,1:35)
+output_jenks_plot$dataset<-c(rep('GOOGLE',27),rep('BLACKBLAZE',35))
+```
+
+```{r}
+to_plot<-melt(output_jenks_plot,id.vars=c('dataset','period'))
+to_plot$period<-as.factor(to_plot$period)
+to_plot <- to_plot[!(to_plot$dataset == 'BLACKBLAZE' & to_plot$period == 12),]
+to_plot$dataset <- factor(to_plot$dataset, levels=c("GOOGLE", "BLACKBLAZE"))
+
+ggplot(data=to_plot,aes(x=variable,y=value,col=period,group=period)) + geom_line() + facet_wrap(~dataset) + theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust=1)) + xlab("Number of Clusters") + ylab("WSS") + guides(col = guide_legend(ncol = 4))
+```
+
+```{r}
+final_output <- NA
+performance_metric<-"Test.AUC"
+#performance_baseline<-"Test.AUPRC.baseline"
+for (dataset in dataset_ls) {
+  for (p in (1:(period_ls[dataset]-1))) {
+    df <- data[[dataset]][["BOOTSTRAP"]][["TUNED"]][["RANDOM"]][[p]]
+    if(performance_metric=="Test.AUPRC"){
+      performance <- df[,performance_metric] - df[,performance_baseline]
+    } else {
+      performance <- df[,performance_metric]
+      if(performance_metric=="Test.AUC"){
+        performance =ifelse(performance<0.5,1-performance,performance)
+        df[,performance_metric]<-performance
+      }
+    }
+    # 4 clusters for google, parameter is 5
+    # 2 clusters for blackblaze, parameter is 3
+    k <- NA
+    if (dataset == 'GOOGLE') {
+      k <- 5
+    } else {
+      k <- 3
+    }
+    Jenk <- getJenksBreaks(performance,k)
+    Jenk <- unique(Jenk)
+    
+    clus = cut(performance,breaks=Jenk,include.lowest =TRUE)
+    i <- length(levels(clus))
+    res <- data.frame(Period = p, Dataset = dataset)
+    min_instance = min(table(as.character(clus)))
+    
+    output<-NA
+    for (l in levels(clus)) {
+      perf_of_rank_df <- df[clus==l,]
+      res$grouplen <- nrow(perf_of_rank_df)
+      if(performance_metric=='Test.AUPRC'){
+        res$median_perf <- median(perf_of_rank_df[,performance_metric] - perf_of_rank_df[,performance_baseline])
+      } else {
+        res$median_perf <- median(perf_of_rank_df[,performance_metric])
+      }
+      
+      res$perf_rank_group <- i
+      
+      repeated_times <- 10
+      kendall_repeat <- vector(mode="numeric", length=repeated_times)
+      top1_repeat <- vector(mode="numeric", length=repeated_times)
+      top3_repeat <- vector(mode="numeric", length=repeated_times)
+      top5_repeat <- vector(mode="numeric", length=repeated_times)
+      
+      for (j in 1:repeated_times) {
+        perf_of_rank_df <- perf_of_rank_df[sample(nrow(perf_of_rank_df), min_instance), ]
+        kendall_repeat <- compute_kendall_w(perf_of_rank_df)$value
+        top1_repeat[j] <- compute_stability_within_one_df(perf_of_rank_df, dataset, period, tuned,bootstrap,1)
+        top3_repeat[j] <- compute_stability_within_one_df(perf_of_rank_df, dataset, period, tuned,bootstrap,3)
+        top5_repeat[j] <- compute_stability_within_one_df(perf_of_rank_df, dataset, period, tuned,bootstrap,5)
+      }
+      res$kendall <- median(kendall_repeat)
+      res$top_1 <- median(top1_repeat)
+      res$top_3 <- median(top3_repeat)
+      res$top_5 <- median(top5_repeat)
+      
+      #            res$top_1 <- compute_stability_within_one_df_voting(perf_of_rank_df, dataset, period, tuned,bootstrap,1)
+      #            res$top_3 <- compute_stability_within_one_df_voting(perf_of_rank_df, dataset, period, tuned,bootstrap,3)
+      #            res$top_5 <- compute_stability_within_one_df_voting(perf_of_rank_df, dataset, period, tuned,bootstrap,5)
+      
+      if (typeof(output) != 'list') {
+        output <- res
+      } else {
+        output <- rbind(output, res)
+      }
+      i <- i - 1
+    }
+    
+    if (typeof(final_output) != 'list') {
+      final_output <- output
+    } else {
+      final_output <- rbind(final_output, output)
+    }
+    
+  }
+  
+}
+
+tail(final_output)
+```
+
+```{r}
+final_output_rank <- NA
+performance_metric<-"Test.AUC"
+#performance_baseline<-"Test.AUPRC.baseline"
+for (dataset in dataset_ls) {
+  for (p in (1:(period_ls[dataset]-1))) {
+    df <- data[[dataset]][["BOOTSTRAP"]][["TUNED"]][["RANDOM"]][[p]]
+    if(performance_metric=="Test.AUPRC"){
+      performance <- df[,performance_metric] - df[,performance_baseline]
+    } else {
+      performance <- df[,performance_metric]
+      if(performance_metric=="Test.AUC"){
+        performance =ifelse(performance<0.5,1-performance,performance)
+        df[,performance_metric]<-performance
+      }
+    }
+    # 4 clusters for google, parameter is 5
+    # 2 clusters for blackblaze, parameter is 3
+    k <- NA
+    if (dataset == 'GOOGLE') {
+      k <- 5
+    } else {
+      k <- 3
+    }
+    Jenk <- getJenksBreaks(performance,k)
+    Jenk <- unique(Jenk)
+    
+    clus = cut(performance,breaks=Jenk,include.lowest =TRUE)
+    i <- length(levels(clus))
+    res <- data.frame(Period = p, Dataset = dataset)
+    
+    rank_1_df <- df[clus==levels(clus)[i],]
+    res$RF <- nrow(rank_1_df[rank_1_df$Model =='RF',])/nrow(rank_1_df)
+    res$GBDT <- nrow(rank_1_df[rank_1_df$Model =='GBDT',])/nrow(rank_1_df)
+    res$QDA <- nrow(rank_1_df[rank_1_df$Model =='QDA',])/nrow(rank_1_df)
+    res$LR <- nrow(rank_1_df[rank_1_df$Model =='LR',])/nrow(rank_1_df)
+    res$CART <- nrow(rank_1_df[rank_1_df$Model =='CART',])/nrow(rank_1_df)
+    res$NN <- nrow(rank_1_df[rank_1_df$Model =='NN',])/nrow(rank_1_df)
+    res$LDA <- nrow(rank_1_df[rank_1_df$Model =='LDA',])/nrow(rank_1_df)
+    
+    #print(rank_1_df)
+    #print(res)
+    #output<-NA
+    #break
+    if (typeof(final_output_rank) != 'list') {
+      final_output_rank <- res
+    } else {
+      final_output_rank <- rbind(final_output_rank, res)
+    }
+    
+  }
+  
+}
+
+final_output_rank
+```
+
+```{r}
+final_output_rank_melt <- melt(final_output_rank, id=c("Period", "Dataset"), variable.name = "Learner", value.name = "Percentage")
+
+reorder_within <- function(x, by, within, fun = mean, sep = "___", ...) {
+  new_x <- paste(x, within, sep = sep)
+  fct_rev(reorder(new_x, by, FUN = fun))
+}
+
+scale_x_reordered <- function(..., sep = "___") {
+  reg <- paste0(sep, ".+$")
+  scale_x_discrete(labels = function(x) gsub(reg, "", x), ...)
+}
+
+ggplot(final_output_rank_melt, aes(x=reorder_within(Learner, Percentage, Dataset, median), y=Percentage*100)) + geom_boxplot() + scale_x_reordered() + facet_wrap(~factor(Dataset, levels=c("GOOGLE", "BLACKBLAZE")), scales = "free_x") + ylab("% in best-performing cluster") + xlab("Learner") + ylim(c(0,100))
+
+#boxplot(final_output_rank$RF, final_output_rank$GBDT, final_output_rank$LR, final_output_rank$QDA,final_output_rank$NN,final_output_rank$LDA,final_output_rank$CART, ylab="% in best-performing cluster", names=c('RF','GBDT','LR','QDA','NN','LDA','CART'), ylim=c(0,1))
+```
+
+```{r}
+final_output_melt <- melt(final_output[,!(names(final_output) %in% c("top_1"))], id=c("Period", "Dataset", "grouplen", "median_perf", "perf_rank_group"), variable.name = "Measurement")
+final_output_melt$Dataset <- factor(final_output_melt$Dataset, levels=c("GOOGLE", "BLACKBLAZE"))
+
+# grouped boxplot
+ggplot(final_output_melt, aes(x=Measurement, y=value, fill=factor(perf_rank_group))) + geom_boxplot() + facet_wrap(~Dataset) + labs(fill = "Performance\nrank of the\ncluster") + scale_x_discrete(labels= c("Kendall's W", "Top 3\nOverlap\nScore", "Top 5\nOverlap\nScore")) + ylab("Value")
+```
+
+```{r}
+overlap_google <- subset(final_output, final_output$Dataset == 'GOOGLE')
+overlap_blackblaze <- subset(final_output, final_output$Dataset == 'BLACKBLAZE' & final_output$Period != 12)
+
+google_rank_1 <- subset(overlap_google, overlap_google$perf_rank_group == 1)
+google_rank_2 <- subset(overlap_google, overlap_google$perf_rank_group == 2)
+google_rank_3 <- subset(overlap_google, overlap_google$perf_rank_group == 3)
+google_rank_4 <- subset(overlap_google, overlap_google$perf_rank_group == 4)
+
+blackblaze_rank_1 <- subset(overlap_blackblaze, overlap_blackblaze$perf_rank_group == 1 )
+blackblaze_rank_2 <- subset(overlap_blackblaze, overlap_blackblaze$perf_rank_group == 2)
+#blackblaze_rank_3 <- subset(overlap_blackblaze, overlap_blackblaze$perf_rank_group == 3)
+
+# Google Top 5 Overlap
+wilcox_res <- data.frame(Dataset = 'GOOGLE', 
+                         RankA = 1, RankB = 2, Measurement = "Top 5 Overlap",
+                         Wilcox_p = wilcox.test(google_rank_1$top_5, google_rank_2$top_5, paired = TRUE, alternative = 'greater')$p.value*3,
+                         Cliff_d = cliff.delta(google_rank_1$top_5, google_rank_2$top_5)$estimate)
+
+wilcox_res <- rbind(wilcox_res, data.frame(Dataset = 'GOOGLE', 
+                         RankA = 1, RankB = 3, Measurement = "Top 5 Overlap",
+                         Wilcox_p = wilcox.test(google_rank_1$top_5, google_rank_3$top_5, paired = TRUE, alternative = 'greater')$p.value*3,
+                         Cliff_d = cliff.delta(google_rank_1$top_5, google_rank_3$top_5)$estimate))
+
+wilcox_res <- rbind(wilcox_res, data.frame(Dataset = 'GOOGLE', 
+                         RankA = 1, RankB = 4, Measurement = "Top 5 Overlap",
+                         Wilcox_p = wilcox.test(google_rank_1$top_5, google_rank_4$top_5, paired = TRUE, alternative = 'greater')$p.value*3,
+                         Cliff_d = cliff.delta(google_rank_1$top_5, google_rank_4$top_5)$estimate))
+
+# Google Top 3 Overlap
+wilcox_res <- rbind(wilcox_res, data.frame(Dataset = 'GOOGLE', 
+                         RankA = 1, RankB = 2, Measurement = "Top 3 Overlap",
+                         Wilcox_p = wilcox.test(google_rank_1$top_3, google_rank_2$top_3, paired = TRUE, alternative = 'greater')$p.value*3,
+                         Cliff_d = cliff.delta(google_rank_1$top_3, google_rank_2$top_3)$estimate))
+
+wilcox_res <- rbind(wilcox_res, data.frame(Dataset = 'GOOGLE', 
+                         RankA = 1, RankB = 3, Measurement = "Top 3 Overlap",
+                         Wilcox_p = wilcox.test(google_rank_1$top_3, google_rank_3$top_3, paired = TRUE, alternative = 'greater')$p.value*3,
+                         Cliff_d = cliff.delta(google_rank_1$top_3, google_rank_3$top_3)$estimate))
+
+wilcox_res <- rbind(wilcox_res, data.frame(Dataset = 'GOOGLE', 
+                         RankA = 1, RankB = 4, Measurement = "Top 3 Overlap",
+                         Wilcox_p = wilcox.test(google_rank_1$top_3, google_rank_4$top_3, paired = TRUE, alternative = 'greater')$p.value*3,
+                         Cliff_d = cliff.delta(google_rank_1$top_3, google_rank_4$top_3)$estimate))
+
+# Google Kendall's W
+wilcox_res <- rbind(wilcox_res, data.frame(Dataset = 'GOOGLE', 
+                         RankA = 1, RankB = 2, Measurement = "Kendall's W",
+                         Wilcox_p = wilcox.test(google_rank_1$kendall, google_rank_2$kendall, paired = TRUE, alternative = 'greater')$p.value*3,
+                         Cliff_d = cliff.delta(google_rank_1$kendall, google_rank_2$kendall)$estimate))
+
+wilcox_res <- rbind(wilcox_res, data.frame(Dataset = 'GOOGLE', 
+                         RankA = 1, RankB = 3, Measurement = "Kendall's W",
+                         Wilcox_p = wilcox.test(google_rank_1$kendall, google_rank_3$kendall, paired = TRUE, alternative = 'greater')$p.value*3,
+                         Cliff_d = cliff.delta(google_rank_1$kendall, google_rank_3$kendall)$estimate))
+
+wilcox_res <- rbind(wilcox_res, data.frame(Dataset = 'GOOGLE', 
+                         RankA = 1, RankB = 4, Measurement = "Kendall's W",
+                         Wilcox_p = wilcox.test(google_rank_1$kendall, google_rank_4$kendall, paired = TRUE, alternative = 'greater')$p.value*3,
+                         Cliff_d = cliff.delta(google_rank_1$kendall, google_rank_4$kendall)$estimate))
+
+# Blackblaze Top 5 Overlap
+
+wilcox_res <- rbind(wilcox_res, data.frame(Dataset = 'BLACKBLAZE', 
+                         RankA = 1, RankB = 2, Measurement = "Top 5 Overlap",
+                         Wilcox_p = wilcox.test(blackblaze_rank_1$top_5, blackblaze_rank_2$top_5, paired = TRUE, alternative = 'greater')$p.value,
+                         Cliff_d = cliff.delta(blackblaze_rank_1$top_5, blackblaze_rank_2$top_5)$estimate))
+
+# Blackblaze Top 3 Overlap
+
+wilcox_res <- rbind(wilcox_res, data.frame(Dataset = 'BLACKBLAZE', 
+                         RankA = 1, RankB = 2, Measurement = "Top 3 Overlap",
+                         Wilcox_p = wilcox.test(blackblaze_rank_1$top_3, blackblaze_rank_2$top_3, paired = TRUE, alternative = 'greater')$p.value,
+                         Cliff_d = cliff.delta(blackblaze_rank_1$top_3, blackblaze_rank_2$top_3)$estimate))
+
+# Blackblaze Kendall's W
+
+wilcox_res <- rbind(wilcox_res, data.frame(Dataset = 'BLACKBLAZE', 
+                         RankA = 1, RankB = 2, Measurement = "Kendall's W",
+                         Wilcox_p = wilcox.test(blackblaze_rank_1$kendall, blackblaze_rank_2$kendall, paired = TRUE, alternative = 'greater')$p.value,
+                         Cliff_d = cliff.delta(blackblaze_rank_1$kendall, blackblaze_rank_2$kendall)$estimate))
+
+wilcox_res
+```
+
+```{r}
+
+qplot(median_perf, kendall, data = final_output, geom=c('point', 'smooth'), xlab = "Median AUC of the cluster", ylab = "Kendall's W", facets=~factor(Dataset, levels=c("GOOGLE", "BLACKBLAZE"))) + ylim(0,1) + xlim(0.5,1) + geom_hline(yintercept=0.60, linetype='longdash', col = 'red') + geom_vline(xintercept=0.75, linetype='solid', col = 'green4')
+```
+
+## RQ3: Are the interpretations from AIOps models consistent across time (i.e., time consistent)?
+
+```{r}
+get_ground_truth <- function(dataset) {
+    best_interpretation <- NA
+    for (period in (1:(period_ls[dataset] - 1))){
+        df <- data[[dataset]][["BOOTSTRAP"]][["TUNED"]][["RANDOM"]][[period]]
+        df$Test.AUC <- ifelse(df$Test.AUC < 0.5, 1 - df$Test.AUC, df$Test.AUC)
+        # might need to change if we choose the optimal way to do this
+        max_performance <- df[which.max(df$Test.AUC),]
+        max_performance$period <- period + 1
+        df_rank_i = rank(-max_performance[,13:ncol(max_performance)-1],ties.method="min")
+        #df_rank_i <- cbind("Feature" = rownames(df_rank_i), df_rank_i)
+        max_performance[,13:ncol(max_performance)-1] <- df_rank_i
+
+      
+        #print(nrow(max_performance))
+        if (typeof(best_interpretation) != 'list') {
+            best_interpretation <- max_performance
+        } else {
+            best_interpretation <- rbind(best_interpretation, max_performance)
+        }
+
+    }
+    return(best_interpretation)
+}
+
+google_ground_truth <- get_ground_truth("GOOGLE")
+blackblaze_ground_truth <- get_ground_truth("BLACKBLAZE")
+```
+
+```{r}
+
+get_squashed_frame<-function(dataset){
+  
+  if(dataset =='GOOGLE'){
+    periods <- 14:27
+  }else{
+    periods <- 18:35
+  }
+  
+  df <- NA
+  for (approach in approaches) {
+    approach <- toupper(approach)
+    
+    for(model in model_ls){
+      for(tp in periods){
+        if(typeof(df)!='list') {  
+          df <- data_rq3_ground_truth[[dataset]][[model]][[approach]][[tp]]
+          
+        }else{
+          df<-rbind(df,data_rq3_ground_truth[[dataset]][[model]][[approach]][[tp]])
+        }
+      }
+    }
+  }
+  return(df)
+}
+
+g_frame<- get_squashed_frame('GOOGLE')
+b_frame<- get_squashed_frame('BLACKBLAZE')
+```
+
+```{r}
+# Combining ground truth
+get_ground_truth_combined <- function(dataset) {
+  best_interpretation <- NA
+  flag = FALSE
+  for (period in (1:(period_ls[dataset] - 1))){
+    
+    df <- data[[dataset]][["BOOTSTRAP"]][["TUNED"]][["RANDOM"]][[period]]
+    
+    if(dataset=='GOOGLE'){
+      if(period >=14){
+        flag<-TRUE
+        df1<- g_frame[g_frame$Period==period,]
+        df1$Model<-paste(df1$Model,df1$Scenario,sep="_")
+        df1$Dataset<-NULL
+        df1$Period<-NULL
+        #print(head(g_frame))
+      }}else if(dataset=='BLACKBLAZE'){
+        if(period>=18){
+          flag<-TRUE
+          df1<-b_frame[b_frame$Period==period,]   
+          df1$Model<-paste(df1$Model,df1$Scenario,sep="_")
+          df1$Dataset<-NULL
+          df1$Period<-NULL
+        }
+      }
+    if(flag ==TRUE){df1$Test.AUC <- ifelse(df1$Test.AUC < 0.5, 1 - df1$Test.AUC, df1$Test.AUC)}
+    df$Test.AUC <- ifelse(df$Test.AUC < 0.5, 1 - df$Test.AUC, df$Test.AUC)
+    
+    # might need to change if we choose the optimal way to do this
+    max_performance_df <- df[which.max(df$Test.AUC),]
+    
+    if(flag==TRUE){
+      max_performance_df1 <- df1[which.max(df1$Test.AUC),]
+      
+      if(max_performance_df$Test.AUC>max_performance_df1$Test.AUC){
+        max_performance<-max_performance_df
+        max_performance$period <- period + 1
+        df_rank_i = rank(-max_performance[,13:ncol(max_performance)-1],ties.method="min")
+        max_performance[,13:ncol(max_performance)-1] <- df_rank_i
+        max_performance<-max_performance[ , !(names(max_performance) %in% c('Iteration','Test.AP','Test.AUPRC','Test.AUPRC.baseline'))]
+      }else{
+        max_performance<-max_performance_df1
+        #colnames(max_performance)[colnames(max_performance) == 'Period'] <- 'period'
+        max_performance$period <- period + 1
+        df_rank_i = rank(-max_performance[,11:ncol(max_performance)-1],ties.method="min")
+        max_performance[,11:ncol(max_performance)-1] <- df_rank_i
+        max_performance<-max_performance[ , !(names(max_performance) %in% c('Scenario','Dataset'))]
+      }
+    }else{
+      
+      max_performance <- df[which.max(df$Test.AUC),]
+      max_performance$period <- period + 1
+      df_rank_i = rank(-max_performance[,13:ncol(max_performance)-1],ties.method="min")
+      
+      max_performance[,13:ncol(max_performance)-1] <- df_rank_i
+      max_performance<-max_performance[ , !(names(max_performance) %in% c('Iteration','Test.AP','Test.AUPRC','Test.AUPRC.baseline'))]
+    }
+    
+    
+    
+    #df_rank_i <- cbind("Feature" = rownames(df_rank_i), df_rank_i)
+    
+    #print(nrow(max_performance))
+    if (typeof(best_interpretation) != 'list') {
+      best_interpretation <- max_performance
+    } else {
+      best_interpretation <- rbind(best_interpretation, max_performance)
+    }
+    
+  }
+  return(best_interpretation)
+}
+
+google_ground_truth_combined <- get_ground_truth_combined("GOOGLE")
+blackblaze_ground_truth_combined <- get_ground_truth_combined("BLACKBLAZE")
+```
+
+```{r}
+get_ground_truth_without_ranking <- function(dataset) {
+  best_interpretation <- NA
+  for (period in (1:(period_ls[dataset] - 1))){
+    df <- data[[dataset]][["BOOTSTRAP"]][["TUNED"]][[period]]
+    df$Test.AUC <- ifelse(df$Test.AUC < 0.5, 1 - df$Test.AUC, df$Test.AUC)
+    # might need to change if we choose the optimal way to do this
+    max_performance <- df[which.max(df$Test.AUC),]
+    # max_performance$period <- period + 1
+    #df_rank_i = rank(-max_performance[,13:ncol(max_performance)-1],ties.method="min")
+    #df_rank_i <- cbind("Feature" = rownames(df_rank_i), df_rank_i)
+    #max_performance[,13:ncol(max_performance)-1] <- df_rank_i
+    
+    
+    #print(nrow(max_performance))
+    if (typeof(best_interpretation) != 'list') {
+      best_interpretation <- max_performance
+    } else {
+      best_interpretation <- rbind(best_interpretation, max_performance)
+    }
+    
+  }
+  return(best_interpretation)
+}
+```
+
+```{r}
+google_ground_truth_without_ranking <- get_ground_truth_without_ranking('GOOGLE')
+overlap_rq3_results <-NA
+for (i in 1:nrow(google_approach_without_ranking)) {
+  for (j in 1:nrow(google_ground_truth_without_ranking)) {
+    df<-rbind(google_ground_truth_without_ranking[j,13:ncol(google_ground_truth_without_ranking)],google_approach_without_ranking[i,11:ncol(google_approach_without_ranking)])
+    #print(df)
+    
+    
+    top1_overlap <- compute_stability_within_one_df_rq3(df,1)
+    top3_overlap <- compute_stability_within_one_df_rq3(df,3)
+    top5_overlap <- compute_stability_within_one_df_rq3(df,5)
+    
+    res <- data.frame(Scenario = google_approach_without_ranking[i,]$Scenario, Period = j+1, top1=top1_overlap,top3=top3_overlap,top5=top5_overlap,dataset='GOOGLE')
+    if (typeof(overlap_rq3_results) != 'list') {
+      overlap_rq3_results <- res
+    } else {
+      overlap_rq3_results <- rbind(overlap_rq3_results, res)
+    }
+    #head(res)
+    #break
+  }
+}
+```
+
+```{r}
+blackblaze_ground_truth_without_ranking <- get_ground_truth_without_ranking('BLACKBLAZE')
+# overlap_rq3_results <-NA
+for (i in 1:nrow(blackblaze_approach_without_ranking)) {
+  for (j in 1:nrow(blackblaze_ground_truth_without_ranking)) {
+    df<-rbind(blackblaze_ground_truth_without_ranking[j,13:ncol(blackblaze_ground_truth_without_ranking)],blackblaze_approach_without_ranking[i,11:ncol(blackblaze_approach_without_ranking)])
+    #print(df)
+    
+    
+    top1_overlap <- compute_stability_within_one_df_rq3(df,1)
+    top3_overlap <- compute_stability_within_one_df_rq3(df,3)
+    top5_overlap <- compute_stability_within_one_df_rq3(df,5)
+    
+    res <- data.frame(Scenario = blackblaze_approach_without_ranking[i,]$Scenario, Period = j+1, top1=top1_overlap,top3=top3_overlap,top5=top5_overlap,dataset='BLACKBLAZE')
+    if (typeof(overlap_rq3_results) != 'list') {
+      overlap_rq3_results <- res
+    } else {
+      overlap_rq3_results <- rbind(overlap_rq3_results, res)
+    }
+    #head(res)
+    #break
+  }
+}
+```
+
+```{r}
+print(compute_stability_within_one_df_rq3(google_approach_without_ranking[,11:ncol(google_approach_without_ranking)],1))
+print(compute_stability_within_one_df_rq3(google_approach_without_ranking[,11:ncol(google_approach_without_ranking)],3))
+print(compute_stability_within_one_df_rq3(google_approach_without_ranking[,11:ncol(google_approach_without_ranking)],5))
+```
+
+```{r}
+print(compute_stability_within_one_df_rq3(blackblaze_approach_without_ranking[,11:ncol(blackblaze_approach_without_ranking)],1))
+print(compute_stability_within_one_df_rq3(blackblaze_approach_without_ranking[,11:ncol(blackblaze_approach_without_ranking)],3))
+print(compute_stability_within_one_df_rq3(blackblaze_approach_without_ranking[,11:ncol(blackblaze_approach_without_ranking)],5))
+```
+
+```{r}
+overlap_rq3_results
+options(repr.plot.width=15, repr.plot.height=8)
+ggplot(data=overlap_rq3_results,aes(x=Period,y=top3,col=Scenario,group=Scenario)) + geom_line() + facet_wrap(~dataset) + theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust=1)) +geom_hline(yintercept=0.60, linetype='dotted', col = 'red')
+```
+
+```{r}
+options(repr.plot.width=15, repr.plot.height=8)
+ggplot(data=overlap_rq3_results[overlap_rq3_results$Scenario=='AWE'| overlap_rq3_results$Scenario=='Full History',],aes(x=Period,y=top3,col=Scenario,group=Scenario)) + geom_line() + facet_wrap(~dataset) + theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust=1)) +geom_hline(yintercept=0.60, linetype='dotted', col = 'red')
+```
+
+```{r}
+overlap_rq3_results[overlap_rq3_results$dataset=='GOOGLE'&overlap_rq3_results$Scenario=='Sliding Window',]
+```
+
+```{r}
+print(unique(overlap_rq3_results[overlap_rq3_results$dataset=='GOOGLE',]$Scenario))
+```
+
+```{r}
+compute_stability_within_one_df_rq3 <- function(df, topn) {
+    #df <- df[colnames(df)[13:length(colnames(df))]]
+    intersect_set = NA
+    union_set = NA
+    df[df<0] <- 0
+    for (i in 1:(nrow(df))) {
+        temp <- df[i,]
+        temp <- temp[, !sapply(temp, function(x) x < 0.0001 )]
+        df_rank_i = data.frame(rank(-temp,ties.method="min"))
+        df_rank_i <- cbind("Feature" = rownames(df_rank_i), df_rank_i)
+        colnames(df_rank_i)[2] <- "Rank"
+        real_topn_including_duplicate = tail(head(sort(unique(df_rank_i$Rank)),topn),1)
+        run_features <- df_rank_i %>% filter(Rank %in% 1:real_topn_including_duplicate) %>% pull(Feature)
+        if (i == 1) {
+            intersect_set = as.character(run_features)
+            union_set = as.character(run_features)
+        } else {
+            intersect_set = intersect(intersect_set, run_features)
+            union_set = union(union_set, run_features)
+        }
+    }
+    return (length(intersect_set)/length(union_set))
+}
+```
+
+```{r}
+# To get the best performing model for each appraoch
+model_ls <- c('LDA', 'QDA', 'LR', 'CART', 'GBDT', 'NN', 'RF')
+
+get_approach_candidate <- function(dataset){
+    best_candidate <- NA
+    for (approach in approaches) {
+        approach <- toupper(approach)
+        df <- NA
+        for(model in model_ls){
+          if(typeof(df)!='list') {  
+            df <- data_rq3[[dataset]][[model]][[approach]]
+          }else{
+            df<-rbind(df,data_rq3[[dataset]][[model]][[approach]])
+          }
+        }
+
+        df$Test.AUC <- ifelse(df$Test.AUC < 0.5, 1 - df$Test.AUC, df$Test.AUC)
+        max_performance <- df[which.max(df$Test.AUC),]
+        # here 13 should be 11, as Yingzhe did not compute auprc and auprc baseline
+        #df_rank_i = rank(-max_performance[,13:ncol(max_performance)],ties.method="min")
+        df_rank_i = rank(-max_performance[,11:ncol(max_performance)],ties.method="min")
+
+        max_performance[,11:ncol(max_performance)] <- df_rank_i
+
+        if (typeof(best_candidate) != 'list') {
+            best_candidate <- max_performance
+        } else {
+            best_candidate <- rbind(best_candidate, max_performance)
+        }
+
+    }
+    return(best_candidate)
+}
+
+google_approach <- get_approach_candidate('GOOGLE')
+blackblaze_approach <- get_approach_candidate('BLACKBLAZE')
+```
+
+```{r}
+model_ls <- c('LDA', 'QDA', 'LR', 'CART', 'GBDT', 'NN', 'RF')
+
+get_approach_candidate_without_ranking <- function(dataset){
+    best_candidate <- NA
+    for (approach in approaches) {
+        approach <- toupper(approach)
+        df <- NA
+        for(model in model_ls){
+          if(typeof(df)!='list') {  
+            df <- data_rq3[[dataset]][[model]][[approach]]
+          }else{
+            df<-rbind(df,data_rq3[[dataset]][[model]][[approach]])
+          }
+        }
+
+        df$Test.AUC <- ifelse(df$Test.AUC < 0.5, 1 - df$Test.AUC, df$Test.AUC)
+        max_performance <- df[which.max(df$Test.AUC),]
+        # here 13 should be 11, as Yingzhe did not compute auprc and auprc baseline
+        #df_rank_i = rank(-max_performance[,13:ncol(max_performance)],ties.method="min")
+        #df_rank_i = rank(-max_performance[,11:ncol(max_performance)],ties.method="min")
+
+        #max_performance[,11:ncol(max_performance)] <- df_rank_i
+
+        if (typeof(best_candidate) != 'list') {
+            best_candidate <- max_performance
+        } else {
+            best_candidate <- rbind(best_candidate, max_performance)
+        }
+
+    }
+    return(best_candidate)
+}
+
+google_approach_without_ranking <- get_approach_candidate_without_ranking('GOOGLE')
+blackblaze_approach_without_ranking <- get_approach_candidate_without_ranking('BLACKBLAZE')
+```
+
+```{r}
+rq3_result_combined <- NA
+
+google_ground_truth_combined<-google_ground_truth_combined[google_ground_truth_combined$period>=14,]
+blackblaze_ground_truth_combined<-blackblaze_ground_truth_combined[blackblaze_ground_truth_combined$period>=18,]
+
+
+for (i in 1:nrow(google_approach)) {
+    for (j in 1:nrow(google_ground_truth_combined)) {
+        # kendall tau on these two vectors
+        scenario_rank <- as.numeric(google_approach[i,11:ncol(google_approach)])
+       # print(google_approach[i,11:ncol(google_approach)])
+        
+        ground_truth_rank <- as.numeric(google_ground_truth_combined[j, 9:(ncol(google_ground_truth_combined)-1)])
+       # print(google_ground_truth_combined[j, 8:(ncol(google_ground_truth_combined)-1)])
+        tau <- cor(scenario_rank,ground_truth_rank,method='kendall',use='pairwise')
+        res_i <- data.frame(Scenario = google_approach[i,]$Scenario, Period = google_ground_truth_combined[j,]$period, Tau=tau, Dataset = 'GOOGLE')
+        if (typeof(rq3_result_combined) != 'list') {
+            rq3_result_combined <- res_i
+        } else {
+            rq3_result_combined <- rbind(rq3_result_combined, res_i)
+        }
+    }
+}
+
+for (i in 1:nrow(blackblaze_approach)) {
+    for (j in 1:nrow(blackblaze_ground_truth_combined)) {
+        # kendall tau on these two vectors
+        scenario_rank <- as.numeric(blackblaze_approach[i,11:ncol(blackblaze_approach)])
+        ground_truth_rank <- as.numeric(blackblaze_ground_truth_combined[j, 9:(ncol(blackblaze_ground_truth_combined)-1)])
+        tau <- cor(scenario_rank,ground_truth_rank,method='kendall',use='pairwise')
+        # rbind(scenario_rank,grount_truth_rank)
+        res_i <- data.frame(Scenario = blackblaze_approach[i,]$Scenario, Period = blackblaze_ground_truth_combined[j,]$period, Tau=tau, Dataset = 'BLACKBLAZE')
+        if (typeof(rq3_result_combined) != 'list') {
+            rq3_result_combined <- res_i
+        } else {
+            rq3_result_combined <- rbind(rq3_result_combined, res_i)
+        }
+    }
+}
+```
+
+```{r}
+
+rq3_result_combined$Dataset <- factor(rq3_result_combined$Dataset, levels=c("GOOGLE", "BLACKBLAZE"))
+ggplot(data=rq3_result_combined,aes(x=Period,y=Tau,col=Scenario,group=Scenario)) + geom_line() + facet_wrap(~Dataset, scales = "free_x") + theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust=1)) + geom_hline(yintercept=0.60, linetype='longdash', col = 'red') + ylab("Kendall's Tau") + labs(fill = "Approach")
+```
+
+```{r}
+#Ground truth performance plotting
+
+
+google_ground_truth_to_plot<-google_ground_truth
+google_ground_truth_to_plot$Dataset<-rep('GOOGLE',nrow(google_ground_truth))
+
+
+blackblaze_ground_truth_to_plot<- blackblaze_ground_truth
+blackblaze_ground_truth_to_plot$Dataset<-rep('BLACKBLAZE',nrow(blackblaze_ground_truth))
+to_plot_ground_truth<-rbind(google_ground_truth_to_plot[,c('Model','Test.AUC','period','Dataset')],blackblaze_ground_truth_to_plot[,c('Model','Test.AUC','period','Dataset')])
+
+google_to_plot_ground_truth_combined<-google_ground_truth_combined
+google_to_plot_ground_truth_combined$Dataset<-rep('GOOGLE',nrow(google_ground_truth_combined))
+
+blackblaze_to_plot_ground_truth_combined<-blackblaze_ground_truth_combined
+blackblaze_to_plot_ground_truth_combined$Dataset<-rep('BLACKBLAZE',nrow(blackblaze_ground_truth_combined))
+
+to_plot_ground_truth_combined<-rbind(google_to_plot_ground_truth_combined[,c('Model','Test.AUC','period','Dataset')],blackblaze_to_plot_ground_truth_combined[,c('Model','Test.AUC','period','Dataset')])
+
+ggplot(data=to_plot_ground_truth,aes(x=period,y=Test.AUC)) + geom_line() + facet_wrap(~Dataset) + theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust=1)) +ylim(0.5,1)
+
+ggplot(data=to_plot_ground_truth_combined,aes(x=period,y=Test.AUC)) + geom_line() + facet_wrap(~Dataset) + theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust=1)) +ylim(0.5,1)
+```
+
+```{r}
+colnames(to_plot_ground_truth_performance)
+
+g_frame$Dataset<-rep('GOOGLE',nrow(g_frame))
+b_frame$Dataset<-rep('BLACKBLAZE',nrow(b_frame))
+#print(colnames(g_frame))
+to_plot_ground_truth_performance<-rbind(g_frame[,c('Model','Test.AUC','Period','Dataset','Scenario')],b_frame[,c('Model','Test.AUC','Period','Dataset','Scenario')])
+colnames(to_plot_ground_truth_performance)
+```
+
+```{r}
+options(repr.plot.width=15, repr.plot.height=8)
+ggplot(data=to_plot_ground_truth_performance,aes(x=Period,y=Test.AUC,col=Scenario,group=Scenario)) + facet_wrap(~Dataset) + theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust=1)) +ylim(0.5,1) +geom_point()
+
+
+options(repr.plot.width=15, repr.plot.height=8)
+ggplot(data=to_plot_ground_truth_combined,aes(x=period,y=Test.AUC,col=Model,group=Model)) + facet_wrap(~Dataset) + theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust=1)) +ylim(0.5,1) +geom_point()
+```
+
+```{r}
+# Google
+
+#sea<-as.numeric(rq3_result[rq3_result$Scenario == 'SEA'&rq3_result$Dataset=='GOOGLE',]$Tau)
+#awe<-as.numeric(rq3_result[rq3_result$Scenario == 'AWE'&rq3_result$Dataset=='GOOGLE',]$Tau)
+#slide<-as.numeric(rq3_result[rq3_result$Scenario == 'Sliding Window'&rq3_result$Dataset=='GOOGLE',]$Tau)
+#full<-as.numeric(rq3_result[rq3_result$Scenario == 'History Window'&rq3_result$Dataset=='GOOGLE',]$Tau)
+
+#kruskal.test(list(sea, awe, slide, full))
+
+
+#Google combined
+
+sea<-as.numeric(rq3_result_combined[rq3_result_combined$Scenario == 'SEA'&rq3_result_combined$Dataset=='GOOGLE',]$Tau)
+awe<-as.numeric(rq3_result_combined[rq3_result_combined$Scenario == 'AWE'&rq3_result_combined$Dataset=='GOOGLE',]$Tau)
+slide<-as.numeric(rq3_result_combined[rq3_result_combined$Scenario == 'Sliding Window'&rq3_result_combined$Dataset=='GOOGLE',]$Tau)
+full<-as.numeric(rq3_result_combined[rq3_result_combined$Scenario == 'History Window'&rq3_result_combined$Dataset=='GOOGLE',]$Tau)
+
+kruskal.test(list(sea, awe, slide, full))
+
+
+print(paste("Kruskal Wallis p-value: ", kruskal.test(list(sea, awe, slide, full))))
+
+print(paste("Slide vs SEA p-value: ", wilcox.test(slide, sea, paired = TRUE, alternative = 'greater')$p.value * 3))
+print(paste("Slide vs AWE p-value: ", wilcox.test(slide, awe, paired = TRUE, alternative = 'greater')$p.value * 3))
+print(paste("Slide vs FULL p-value: ", wilcox.test(slide, full, paired = TRUE, alternative = 'greater')$p.value * 3))
+```
+
+```{r}
+# Blackblaze
+
+#sea<-as.numeric(rq3_result[rq3_result$Scenario == 'SEA'&rq3_result$Dataset=='BLACKBLAZE',]$Tau)
+#awe<-as.numeric(rq3_result[rq3_result$Scenario == 'AWE'&rq3_result$Dataset=='BLACKBLAZE',]$Tau)
+#slide<-as.numeric(rq3_result[rq3_result$Scenario == 'Sliding Window'&rq3_result$Dataset=='BLACKBLAZE',]$Tau)
+#full<-as.numeric(rq3_result[rq3_result$Scenario == 'History Window'&rq3_result$Dataset=='BLACKBLAZE',]$Tau)
+
+#print(paste("Kruskal Wallis p-value: ", kruskal.test(list(sea, awe, slide, full))))
+
+#print(paste("Slide vs SEA p-value: ", wilcox.test(slide, sea, paired = TRUE, alternative = 'greater')$p.value * 3))
+#print(paste("Slide vs AWE p-value: ", wilcox.test(slide, awe, paired = TRUE, alternative = 'greater')$p.value * 3))
+#print(paste("Slide vs FULL p-value: ", wilcox.test(slide, full, paired = TRUE, alternative = 'greater')$p.value * 3))
+
+
+#Blackblaze combined
+
+# Blackblaze
+
+sea<-as.numeric(rq3_result_combined[rq3_result_combined$Scenario == 'SEA'&rq3_result_combined$Dataset=='BLACKBLAZE',]$Tau)
+awe<-as.numeric(rq3_result_combined[rq3_result_combined$Scenario == 'AWE'&rq3_result_combined$Dataset=='BLACKBLAZE',]$Tau)
+slide<-as.numeric(rq3_result_combined[rq3_result_combined$Scenario == 'Sliding Window'&rq3_result_combined$Dataset=='BLACKBLAZE',]$Tau)
+full<-as.numeric(rq3_result_combined[rq3_result_combined$Scenario == 'History Window'&rq3_result_combined$Dataset=='BLACKBLAZE',]$Tau)
+
+print(paste("Kruskal Wallis p-value: ", kruskal.test(list(sea, awe, slide, full))))
+
+print(paste("Slide vs SEA p-value: ", wilcox.test(slide, sea, paired = TRUE, alternative = 'greater')$p.value * 3,cliff.delta(slide, sea)$estimate))
+print(paste("Slide vs AWE p-value: ", wilcox.test(slide, awe, paired = TRUE, alternative = 'greater')$p.value * 3,cliff.delta(slide, awe)$estimate))
+print(paste("Slide vs FULL p-value: ", wilcox.test(slide, full, paired = TRUE, alternative = 'greater')$p.value * 3,cliff.delta(slide, full)$estimate))
+
+print(cliff.delta(slide, sea)$estimate)
+
+
+
+print(paste("Full vs SEA p-value: ", wilcox.test(full, sea, paired = TRUE, alternative = 'greater')$p.value * 3,cliff.delta(full, sea)$estimate))
+print(paste("Full vs AWE p-value: ", wilcox.test(full, awe, paired = TRUE, alternative = 'greater')$p.value * 3,cliff.delta(full, awe)$estimate))
+print(paste("Full vs Sliding p-value: ", wilcox.test(full, slide, paired = TRUE, alternative = 'greater')$p.value * 3,cliff.delta(full, slide)$estimate))
+```
+
+```{r}
+compute_stability_with_two_rows <- function(df, topn) {
+    # df <- df[colnames(df)[13:length(colnames(df))]]
+    intersect_set = NA
+    union_set = NA
+    df[df<0] <- 0
+    for (i in 1:(nrow(df))) {
+        temp <- df[i,]
+        temp <- temp[, !sapply(temp, function(x) x < 0.0001 )]
+        df_rank_i = data.frame(rank(-temp,ties.method="min"))
+        df_rank_i <- cbind("Feature" = rownames(df_rank_i), df_rank_i)
+        colnames(df_rank_i)[2] <- "Rank"
+        real_topn_including_duplicate = tail(head(sort(unique(df_rank_i$Rank)),topn),1)
+        run_features <- df_rank_i %>% filter(Rank %in% 1:real_topn_including_duplicate) %>% pull(Feature)
+        if (i == 1) {
+            intersect_set = as.character(run_features)
+            union_set = as.character(run_features)
+        } else {
+            intersect_set = intersect(intersect_set, run_features)
+            union_set = union(union_set, run_features)
+        }
+    }
+    return (length(intersect_set)/length(union_set))
+}
+```

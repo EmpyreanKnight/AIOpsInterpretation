@@ -14,6 +14,7 @@ from concept_drift_detection import StaticModel, SlidingWindowRetrain, HistoryRe
 GOOGLE_OUTPUT_FILE = r'update_google_'
 BACKBLAZE_OUTPUT_FILE = r'update_disk_'
 MODEL_FOLDER = r'./saved_models/'
+OUTPUT_FOLDER = r'./outputs/'
 SAVE_MODEL = True
 N_ROUNDS = 100
 MODEL_NAME = ''
@@ -115,11 +116,11 @@ if __name__ == "__main__":
 
     if args.d == 'g':
         print('Choose Google as dataset')
-        OUTPUT_FILE = GOOGLE_OUTPUT_FILE + args.m + '.csv'
+        OUTPUT_FILE = OUTPUT_FOLDER + GOOGLE_OUTPUT_FILE + args.m + '.csv'
         DATASET = 'Google'
     elif args.d == 'b':
         print('Choose Backblaze as dataset')
-        OUTPUT_FILE = BACKBLAZE_OUTPUT_FILE + args.m + '.csv'
+        OUTPUT_FILE = OUTPUT_FOLDER + BACKBLAZE_OUTPUT_FILE + args.m + '.csv'
         DATASET = 'Backblaze'
     else:
         exit(-1)
