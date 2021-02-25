@@ -132,7 +132,6 @@ dmypy.json
 *.joblib
 .vscode/settings.json
 *.npy
-*.csv
 tracker.md
 analysis/.RData
 analysis/.Rhistory
