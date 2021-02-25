@@ -128,10 +128,11 @@ dmypy.json
 # Pyre type checker
 .pyre/
 
-*.csv
 *.joblib
 .vscode/settings.json
 *.npy
 tracker.md
 analysis/.RData
 analysis/.Rhistory
+data/disk_failure_v2.csv
+data/google_job_failure.csv
